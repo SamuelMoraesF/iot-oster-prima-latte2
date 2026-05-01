@@ -51,6 +51,7 @@ Marque com `[x]` conforme for comprando.
 - [ ] Bico vaporizador convencional (substituir o panarello original)
 - [ ] Mola ajustável para OPV (ajuste para limite de 9 bar — verificar compatibilidade)
 - [ ] Conexão/adaptador para transdutor de pressão (T ou fitting 1/8" BSP)
+- [ ] Shower screen IMS Precision 51mm (substituir a tela de dispersão stock por uma com furos a laser para distribuição mais uniforme)
 
 ## 🔌 Material Elétrico
 
