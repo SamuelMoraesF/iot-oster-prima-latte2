@@ -120,6 +120,7 @@ sequenceDiagram
 | [`docs/interface.md`](docs/interface.md) | Interface web e display touch |
 | [`docs/mqtt.md`](docs/mqtt.md) | Tópicos e métricas MQTT |
 | [`docs/ota.md`](docs/ota.md) | Atualização remota de firmware (OTA via S3) |
+| [`docs/checklist-compras.md`](docs/checklist-compras.md) | Checklist de itens para comprar |
 
 ## 🔧 Funcionalidades
 
