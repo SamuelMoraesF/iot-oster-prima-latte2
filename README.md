@@ -1,5 +1,9 @@
 # ☕ IoT Oster Prima Latte 6701
 
+<p align="center">
+  <img src="machine.svg" alt="Oster Prima Latte II - BVSTEM6701" width="300" />
+</p>
+
 Projeto de automação e instrumentação da cafeteira Oster Prima Latte II (modelo BVSTEM6701), transformando-a em uma máquina de espresso inteligente com controle total via ESP32.
 
 ## 🎯 Objetivos
