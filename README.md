@@ -211,6 +211,23 @@ graph LR
 - Manter aterramento adequado
 - O conector de aviação deve suportar a corrente e tensão necessárias
 
+## 🔧 Modificações Mecânicas
+
+- **OPV ajustado para 9 bar** — limite de pressão adequado para espresso
+- **Substituição do vaporizador** — troca do sistema panarello/auto-cappuccino original por um **bico vaporizador convencional** (tipo Rancilio Silvia ou similar), permitindo texturização manual do leite com controle real de microespuma
+
+## 🗺️ Roadmap
+
+- [x] Documentação e levantamento de componentes
+- [ ] Montagem do hardware e fiação
+- [ ] Firmware base (PID, sensores, dimmer)
+- [ ] Interface web + display touch
+- [ ] Perfilamento de pressão avançado (curvas customizáveis)
+- [ ] Integração com **[Beanconqueror](https://beanconqueror.com/)** — envio automático de dados de extração (peso, tempo, ratio, temperatura, pressão) via Bluetooth ou API, para tracking completo do café
+- [ ] Perfis de extração exportáveis/importáveis (JSON)
+- [ ] REST API pública
+- [ ] Modo headless (operação 100% via web/MQTT)
+
 ## 📝 Status do Projeto
 
 🟡 **Em planejamento** — documentação e levantamento de componentes
