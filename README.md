@@ -233,6 +233,16 @@ graph LR
 
 🟡 **Em planejamento** — documentação e levantamento de componentes
 
+## 🎬 Referências e Recomendações
+
+Vídeos do **Evandro Toniati** com mods na Oster Prima Latte — referência direta para este projeto:
+
+| Vídeo | Tema |
+|---|---|
+| [Bico de vapor na Oster PrimaLatte](https://www.youtube.com/watch?v=fWLBNegrcwI) | Substituição do panarello por bico vaporizador convencional |
+| [Gaggiuino na PrimaLatte](https://www.youtube.com/watch?v=QdTZHftKyj0) | Instalação do Gaggiuino na mesma máquina |
+| [Dimmer, Manômetro e OPV na PrimaLatte](https://www.youtube.com/watch?v=DWqhqewFlEk) | Dimmer AC, manômetro analógico e ajuste do OPV |
+
 ## 📄 Licença
 
 Projeto pessoal e de código aberto. Use como referência para seus próprios mods de cafeteira.
