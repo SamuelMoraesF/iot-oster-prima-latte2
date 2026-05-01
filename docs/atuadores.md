@@ -58,20 +58,12 @@ Controlar a potência da bomba vibratória para pré-infusão suave e perfis de 
 
 ### Perfis de Pré-infusão
 
-```
-Pressão
-(bar)
-  9 ┤                    ┌──────────────
-    │                   /
-  6 ┤               ───┘
-    │              /
-  3 ┤         ────┘
-    │        /
-  0 ┤───────┘
-    └──────┬──────┬──────┬──────┬─────→ tempo (s)
-           0      5     10     15
-
-    Exemplo: Rampa suave de pré-infusão
+```mermaid
+xychart-beta
+    title "Exemplo: Rampa suave de pré-infusão"
+    x-axis "Tempo (s)" [0, 5, 10, 15, 20, 25]
+    y-axis "Pressão (bar)" 0 --> 10
+    line [0, 3, 3, 6, 9, 9]
 ```
 
 ### Perfis Programáveis
@@ -86,13 +78,15 @@ Pressão
 
 ---
 
-## 3. Módulo Relé 4 Canais — Botões e Liga/Desliga
+## 3. Relés — Botões e Kill Switch
+
+### 3.1 Módulo Relé 3 Canais — Botões do Painel
 
 ### Propósito
-Substituir os botões físicos do painel por triggers digitais e adicionar controle de liga/desliga remoto.
+Substituir os botões físicos do painel por triggers digitais.
 
 ### Especificações
-- **Módulo**: Relé 4 canais, 5V, optoacoplador isolado
+- **Módulo**: Relé 3 canais (ou módulo 4ch usando apenas 3), 5V, optoacoplador isolado
 - **Capacidade**: 10A/250V AC por canal
 - **Trigger**: LOW level (ativo em LOW)
 
@@ -103,21 +97,48 @@ Substituir os botões físicos do painel por triggers digitais e adicionar contr
 | Relé 1 | Botão Café | Simula pressionar o botão de café/espresso |
 | Relé 2 | Botão Vapor | Simula pressionar o botão de vapor |
 | Relé 3 | Botão Leite | Simula pressionar o botão de leite |
-| Relé 4 | Liga/Desliga | Controle geral de energia da máquina |
 
 ### Instalação
 - Soldar fios em paralelo aos botões originais no painel
 - O relé "simula" o pressionamento do botão fechando o contato
-- Para o liga/desliga: relé na alimentação principal (antes da fonte da máquina)
 
-### Lógica de Automação
+### 3.2 Relé AC 30A — Kill Switch de Segurança
 
-Exemplo de sequência automatizada:
-1. Relé 4: liga a máquina
-2. Aguarda aquecimento (PID atinge setpoint)
-3. Relé 1: inicia extração
-4. Monitora peso na balança
-5. Quando atinge ratio, desliga a bomba (via dimmer ou relé)
+### Propósito
+Corte físico de emergência da parte de potência da máquina (thermoblock e bomba). **Não é o controle principal de liga/desliga** — o ESP32 já controla aquecimento via SSR e bomba via dimmer.
+
+### Especificações
+- **Tipo**: Relé individual 30A (ou contator)
+- **Conexão**: NC (normalmente fechado) — potência passa por padrão
+- **Capacidade**: 30A/250V AC
+
+### Quando é acionado
+- Comando de emergência via MQTT / interface web
+- Detecção de falha crítica pelo firmware (temperatura excessiva, SSR travado)
+- Manutenção remota
+
+### Comportamento
+- **NC (normalmente fechado)**: potência AC passa normalmente para thermoblock e bomba
+- Se o ESP32 reiniciar: máquina **continua operando** (relé NC mantém contato fechado)
+- ESP32 aciona o relé para **cortar** energia em caso de emergência
+- Fonte DC permanece ligada independentemente — ESP32 sempre online para comandos remotos
+
+### Arquitetura de energia
+
+```mermaid
+graph LR
+    AC["220V AC"] --> KILL["🛑 Kill Switch 30A (NC)"]
+    AC --> FONTE["🔋 Fonte HLK-PM05"]
+
+    KILL --> THERMO["Thermoblock (via SSR/PID)"]
+    KILL --> BOMBA["Bomba (via Dimmer)"]
+
+    FONTE --> DC["5V DC (sempre ligada)"]
+    DC --> ESP["ESP32 + sensores + display"]
+    DC --> CONECTOR["Conector aviação → case externo"]
+```
+
+> **Nota**: O controle funcional (ligar/desligar aquecimento e bomba) é feito pelo ESP32 via SSR e dimmer. O kill switch é apenas uma camada adicional de segurança para corte físico total da parte de potência.
 
 ---
 

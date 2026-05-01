@@ -45,10 +45,12 @@ graph TB
         end
 
         subgraph alimentacao["Alimentação"]
-            AC["Rede AC"]
-            RELE4["Relé 4 (liga/desliga)"]
+            AC["Rede AC 220V"]
+            KILLSW["🛑 Relé AC 30A (NC)<br/>Kill switch segurança"]
             FONTE["HLK-PM05 (AC→5V DC)"]
-            AC --> RELE4
+            AC --> KILLSW
+            KILLSW -->|"Potência"| RES
+            KILLSW -->|"Potência"| BOMBA
             AC --> FONTE
         end
     end
@@ -72,7 +74,7 @@ graph TB
     BTN_CAFE -.-> CABO
     BTN_VAPOR -.-> CABO
     BTN_LEITE -.-> CABO
-    RELE4 -.-> CABO
+    KILLSW -.->|"controle"| CABO
     FONTE -->|"5V DC"| CABO
 
     CABO <--> ESP32
@@ -101,7 +103,7 @@ O conector GX16 (8 pinos) ou GX20 pode não ser suficiente. Considerar usar dois
 | 10 | RELE_1 | Externo → Interno | Controle relé botão café |
 | 11 | RELE_2 | Externo → Interno | Controle relé botão vapor |
 | 12 | RELE_3 | Externo → Interno | Controle relé botão leite |
-| 13 | RELE_4 | Externo → Interno | Controle relé liga/desliga |
+| 13 | KILL_SW | Externo → Interno | Controle relé kill switch (segurança — corte de potência AC) |
 | 14 | AC_L | Passthrough | Fase AC (para PZEM no case) |
 | 15 | AC_N | Passthrough | Neutro AC (para PZEM no case) |
 

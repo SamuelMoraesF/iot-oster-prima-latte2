@@ -21,9 +21,10 @@ Marque com `[x]` conforme for comprando.
 
 ## ⚡ Atuadores
 
-- [ ] SSR 40A (SSR-40DA — entrada 3-32V DC, saída 24-380V AC) — PID da caldeira
+- [ ] SSR 40A (SSR-40DA — entrada 3-32V DC, saída 24-380V AC) — PID do thermoblock
 - [ ] Dimmer AC RobotDyn (com zero-crossing integrado) — controle da bomba
-- [ ] Módulo relé 4 canais 5V (optoacoplador isolado) — botões + liga/desliga
+- [ ] Módulo relé 3 canais 5V (optoacoplador isolado) — botões do painel
+- [ ] Relé individual 30A / contator (NC) — kill switch de segurança para corte de potência AC
 
 ## 📱 Interface
 

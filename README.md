@@ -30,9 +30,10 @@ graph TB
         end
 
         subgraph atuadores["Atuadores de potência"]
-            SSR["⚡ SSR 40A<br/>PID caldeira"]
+            SSR["⚡ SSR 40A<br/>PID thermoblock"]
             DIMMER["🔌 Dimmer AC<br/>Bomba / pré-infusão"]
-            RELES["🔘 Relés 4ch<br/>Botões + liga/desliga"]
+            RELES["🔘 Relés 3ch<br/>Botões do painel"]
+            KILLSW["🛑 Relé AC 30A<br/>Kill switch segurança"]
         end
 
         FONTE["🔋 Fonte HLK-PM05<br/>AC → 5V DC"]
@@ -56,6 +57,7 @@ graph TB
     SSR --> CABO
     DIMMER --> CABO
     RELES --> CABO
+    KILLSW --> CABO
     FONTE --> CABO
 
     CABO --> ESP32
@@ -172,9 +174,12 @@ sequenceDiagram
 - Relés em paralelo com os botões originais do painel
 - Triggers digitais via ESP32, automação de sequências
 
-### 10. Relé Principal
-- Liga/desliga geral da máquina de forma remota
-- Controle via MQTT / interface web / agendamento
+### 10. Kill Switch (Relé AC)
+- Relé AC 30A como **corte de segurança** da parte de potência da máquina
+- Não é o controle principal de liga/desliga — o ESP32 já controla aquecimento (SSR) e bomba (dimmer)
+- Serve como proteção extra: corte físico total em caso de emergência, manutenção ou falha crítica
+- Acionável via MQTT / interface web
+- Fonte DC permanece ligada (ESP32 sempre online para comandos remotos)
 
 ### 11. Métricas de Energia
 - Módulo PZEM-004T — tensão, corrente, potência, kWh, fator de potência
