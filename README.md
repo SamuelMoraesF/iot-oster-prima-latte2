@@ -119,6 +119,7 @@ sequenceDiagram
 | [`docs/atuadores.md`](docs/atuadores.md) | Detalhes dos atuadores |
 | [`docs/interface.md`](docs/interface.md) | Interface web e display touch |
 | [`docs/mqtt.md`](docs/mqtt.md) | Tópicos e métricas MQTT |
+| [`docs/ota.md`](docs/ota.md) | Atualização remota de firmware (OTA via S3) |
 
 ## 🔧 Funcionalidades
 
@@ -153,7 +154,13 @@ sequenceDiagram
 - Dashboard em tempo real (temperatura, pressão, peso)
 - Histórico de extrações com gráficos
 - Configuração de perfis e PID
-- OTA updates do firmware
+
+### 7.1 OTA via S3
+- Atualização remota de firmware via bucket S3
+- Esquema dual-partition (OTA0/OTA1) com rollback automático
+- Verificação SHA256 + self-test pós-atualização
+- Trigger por polling periódico ou comando MQTT
+- Detalhes em [`docs/ota.md`](docs/ota.md)
 
 ### 8. Display Touch
 - TFT ILI9341 2.8" com touch XPT2046
