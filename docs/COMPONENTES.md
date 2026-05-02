@@ -17,9 +17,9 @@ classDiagram
         +PA6: SPI1 MISO
         +PA7: SPI1 MOSI
         +PB0: Transdutor pressão (ADC in)
-        +PB1: Sensor nível (ADC in)
-        +PB3: NAU7802 SDA (I2C2)
-        +PB4: NAU7802 SCL (I2C2 — AF9)
+        +PB1: (livre — reserva)
+        +PB3: I2C2 SDA (NAU7802 + FDC2214)
+        +PB4: I2C2 SCL (NAU7802 + FDC2214 — AF9)
         +PB5: SSR thermoblock (timer PWM out)
         +PB6: Opto botão 1 (out)
         +PB7: Opto botão 2 (out)
@@ -186,12 +186,27 @@ classDiagram
         Endereço: 0x2A
     }
 
+    class FDC2214_Nivel {
+        <<Sensor Nível Capacitivo>>
+        +SDA: I2C (↔STM32 PB3)
+        +SCL: I2C (←STM32 PB4)
+        +CH0: Tira excitação
+        +CH1: (livre)
+        +ADDR: VDD (endereço 0x2B)
+        ---
+        Resolução: 28-bit
+        Taxa: 4.08 ksps
+        Endereço: 0x2B (ADDR=HIGH)
+        Sensor: tiras coplanares
+    }
+
     STM32F411_BlackPill --> RobotDyn_Dimmer : "PA0 Z-C (in), PA1 PWM (out)"
     RobotDyn_Dimmer --> OPV_Ajustavel : "220V controlado → bomba → OPV"
     Transdutor_Pressao --> STM32F411_BlackPill : "PB0 ADC (0.5-4.5V)"
     STM32F411_BlackPill --> SSR_DC_AC : "PB5 PWM (~1-2Hz)"
     MAX31865_PT100 --> STM32F411_BlackPill : "SPI1 (PA4-7)"
     NAU7802_Balanca --> STM32F411_BlackPill : "I2C2 (PB3/PB4 AF9)"
+    FDC2214_Nivel --> STM32F411_BlackPill : "I2C2 (PB3/PB4 — 0x2B)"
     STM32F411_BlackPill --> SLA_05VDC_SL_C : "PB9 → NPN driver → bobina"
     STM32F411_BlackPill --> PC817_x6 : "PB6-8,10,12,13 → 6 botões"
 ```
@@ -351,9 +366,9 @@ classDiagram
 | PA6 | SPI1 MISO | SPI1 | Compartilhado MAX31865 |
 | PA7 | SPI1 MOSI | SPI1 | Compartilhado MAX31865 |
 | PB0 | Transdutor pressão | ADC1_CH8 | 0-3.3V (divisor resistivo se necessário) |
-| PB1 | Sensor nível | ADC1_CH9 | Capacitivo, sinal analógico |
-| PB3 | NAU7802 SDA | I2C2 (AF9) | Balança — dados bidirecional |
-| PB4 | NAU7802 SCL | I2C2 (AF9) | Balança — clock |
+| PB1 | *(livre — reserva)* | ADC1_CH9 | Liberado pela mudança FDC2214 → I2C |
+| PB3 | I2C2 SDA | I2C2 (AF9) | Compartilhado: NAU7802 (0x2A) + FDC2214 (0x2B) |
+| PB4 | I2C2 SCL | I2C2 (AF9) | Compartilhado: NAU7802 + FDC2214 |
 | PB5 | SSR thermoblock | Timer PWM out | TIM3_CH2 — PID slow PWM (~1-2Hz) |
 | PB6 | Opto botão 1 | Digital out | Via resistor 220Ω → PC817 |
 | PB7 | Opto botão 2 | Digital out | Via resistor 220Ω → PC817 |
@@ -363,7 +378,7 @@ classDiagram
 | PB12 | Opto botão 5 | Digital out | Via resistor 220Ω → PC817 |
 | PB13 | Opto botão 6 | Digital out | Via resistor 220Ω → PC817 |
 
-**Pinos usados:** 20 de 36 disponíveis — **sobra confortável**
+**Pinos usados:** 19 de 36 disponíveis — **sobra confortável** (PB1 liberado)
 
 ### Notas de integração
 
@@ -1707,6 +1722,229 @@ A configuração de 3 fios compensa a resistência dos cabos:
 
 ---
 
+## 13. FDC2214 + Tiras coplanares — Sensor de nível do reservatório
+
+### Visão geral
+
+Sensor capacitivo de alta resolução para medir continuamente o nível de água no reservatório de acrílico removível da cafeteira. Utiliza duas tiras de cobre coplanares coladas na **parede interna da máquina** — sem qualquer contato com a água e sem necessidade de modificar o reservatório.
+
+### Princípio de funcionamento — capacitor coplanar
+
+Duas tiras de cobre paralelas, separadas por um pequeno gap, formam um capacitor coplanar. O campo elétrico entre elas se projeta para fora da superfície, atravessando a parede da máquina e do reservatório de acrílico. A presença de água (dielétrico alto, εr ≈ 80) na região do campo aumenta significativamente a capacitância; ar (εr ≈ 1) não.
+
+```mermaid
+graph LR
+    subgraph "Vista frontal — parede da máquina"
+        direction TB
+        A["Tira A<br/>(excitação)<br/>5-10mm largura"] --- GAP["Gap<br/>3-5mm"] --- B["Tira B<br/>(referência/shield)<br/>5-10mm largura"]
+    end
+
+    subgraph "Vista lateral — corte transversal"
+        direction LR
+        P1["Parede<br/>máquina"] --> TA["Tira A"] --> G2["Gap ar<br/>~1mm"] --> AC["Parede<br/>acrílico"] --> AGUA["Água<br/>(εr≈80)"]
+        P1b["Parede<br/>máquina"] --> TB["Tira B"] --> G2b["Gap ar<br/>~1mm"] --> AC2["Parede<br/>acrílico"] --> AGUA2["Água<br/>(εr≈80)"]
+    end
+```
+
+```mermaid
+graph TB
+    subgraph "Campo elétrico coplanar"
+        direction TB
+        T["────── Tira A ────── gap ────── Tira B ──────"]
+        C1["Campo elétrico sai de A"]
+        C2["Atravessa parede + acrílico"]
+        C3["Penetra na água (ou ar)"]
+        C4["Retorna por B"]
+        T --> C1 --> C2 --> C3 --> C4
+    end
+
+    subgraph "Resultado"
+        R1["Água na frente → capacitância ALTA"]
+        R2["Ar na frente → capacitância BAIXA"]
+        R3["Nível parcial → capacitância PROPORCIONAL"]
+    end
+```
+
+### Componentes
+
+#### FDC2214 — Conversor capacitância-para-digital (TI)
+
+| Parâmetro | Valor |
+|---|---|
+| Fabricante | Texas Instruments |
+| Canais | 4 (FDC2214) — usando 1 para nível |
+| Resolução | **28 bits** (~268 milhões de níveis) |
+| Taxa de amostragem | Até 4.08 ksps |
+| Interface | **I2C** (até 400 kHz) |
+| Endereço I2C | **0x2B** (ADDR=HIGH) — evita conflito com NAU7802 (0x2A) |
+| Alimentação | **3.3V** |
+| Consumo | ~2 mA ativo, ~35 µA standby |
+| Encapsulamento | WQFN-28 (módulo breakout recomendado) |
+| Faixa de capacitância | 0.2 pF a 100+ pF (com indutor externo) |
+| Temperatura operação | -40°C a +125°C |
+
+#### Tiras de cobre coplanares
+
+| Parâmetro | Valor |
+|---|---|
+| Material | **Fita de cobre adesiva** (blindagem EMI / guitarras) |
+| Largura de cada tira | 5-10 mm |
+| Comprimento | Altura útil do reservatório (~15 cm) |
+| Gap entre tiras | **3-5 mm** |
+| Posição | Coladas verticalmente na parede interna da máquina |
+| Conexão Tira A | FDC2214 CH0 sensor input (via indutor LC) |
+| Conexão Tira B | FDC2214 shield / GND |
+| Custo | ~R$5 (rolo de fita adesiva de cobre) |
+
+#### Indutor externo (circuito LC)
+
+| Parâmetro | Valor |
+|---|---|
+| Tipo | SMD indutor fixo |
+| Valor | **18 µH** (típico para faixa de ~1-10 MHz) |
+| Função | Forma o circuito LC com a capacitância do sensor — o FDC2214 mede a frequência de ressonância |
+| Notas | O módulo breakout geralmente inclui o indutor; se usar CI avulso, adicionar conforme application note SNOA930 (TI) |
+
+### Circuito LC e medição
+
+O FDC2214 não mede capacitância diretamente — ele mede a **frequência de ressonância** de um circuito LC:
+
+```
+f = 1 / (2π × √(L × C))
+```
+
+Onde:
+- **L** = indutor externo (fixo, ~18 µH)
+- **C** = capacitância do sensor (varia com nível de água)
+
+Quando a água sobe → C aumenta → f diminui → FDC2214 reporta valor digital proporcional.
+
+### Conexão elétrica
+
+```mermaid
+graph LR
+    subgraph "Barramento I2C2 (3.3V)"
+        SDA["PB3 — SDA"]
+        SCL["PB4 — SCL"]
+    end
+
+    subgraph "FDC2214 (0x2B)"
+        FDC["FDC2214"]
+        ADDR["ADDR → VDD (3.3V)"]
+    end
+
+    subgraph "Circuito LC sensor"
+        L["Indutor 18µH"]
+        TA["Tira A (excitação)"]
+        TB["Tira B (shield/GND)"]
+    end
+
+    SDA <--> FDC
+    SCL --> FDC
+    FDC --> L --> TA
+    FDC --> TB
+
+    subgraph "Mesmo barramento"
+        NAU["NAU7802 (0x2A)"]
+    end
+
+    SDA <--> NAU
+    SCL --> NAU
+```
+
+### Posicionamento físico
+
+```mermaid
+graph TB
+    subgraph "Vista superior — máquina"
+        PM["Parede da máquina (plástico)"]
+        TA2["═ Tira A ═  gap  ═ Tira B ═<br/>(coladas na parede interna)"]
+        PA["Parede do acrílico (reservatório)"]
+        AGUA3["~~~~~~~~ água ~~~~~~~~"]
+    end
+
+    PM --> TA2
+    TA2 -->|"~1mm gap ar"| PA
+    PA --> AGUA3
+```
+
+**Requisitos de posicionamento:**
+
+| Critério | Valor |
+|---|---|
+| Altura da zona de medição | ~15 cm (altura útil do reservatório) |
+| Distância tiras↔acrílico | **< 5 mm** (quanto menor, melhor sensibilidade) |
+| Orientação das tiras | **Vertical** — paralelas entre si |
+| Gap entre tiras | **3-5 mm** (gap menor = campo mais concentrado) |
+| Zona morta inferior | ~5 mm (abaixo das tiras) |
+| Zona morta superior | ~5 mm (acima das tiras) |
+
+### Especificações de medição
+
+| Parâmetro | Valor |
+|---|---|
+| Resolução efetiva | **< 0.5 mm** de nível (28 bits, mas limitado por ruído mecânico) |
+| Precisão após calibração | **±1-2%** do nível total |
+| Taxa de atualização | **~40 Hz** (4080 sps com média de 100 amostras) |
+| Tempo de resposta | **< 25 ms** (mais rápido que qualquer variação de nível) |
+| Repetibilidade | Excelente — desde que o reservatório encaixe na mesma posição |
+| Sensibilidade a vapor | **Nenhuma** (sensor externo à câmara de água) |
+| Sensibilidade ao toque externo | **Desprezível** (campo concentrado entre as tiras, não se projeta para trás) |
+
+### Calibração
+
+A calibração é feita uma única vez e pode ser refinada automaticamente pelo firmware:
+
+**Calibração manual (inicial):**
+
+1. **Ponto zero** — reservatório encaixado e vazio → registrar valor do FDC2214 como `C_min`
+2. **Ponto cheio** — reservatório encaixado e cheio até a marca → registrar como `C_max`
+3. **Nível (%)** = `(C_lido - C_min) / (C_max - C_min) × 100`
+
+**Calibração automática (firmware):**
+
+- Ao detectar **remoção do reservatório** (capacitância cai abruptamente para valor muito baixo) → sem reservatório
+- Ao detectar **recolocação** → pico de capacitância + estabilização → recalibrar `C_min` se vazio ou inferir nível atual
+- **Detecção de anomalia** — se a leitura ultrapassa `C_max` de forma sustentada → possível condensação ou desalinhamento → alertar no display
+
+### Vantagens da configuração coplanar
+
+| Vantagem | Detalhe |
+|---|---|
+| **Sem contato com água** | Tiras ficam na parede da máquina — higiene total |
+| **Sem modificação no reservatório** | Reservatório original intacto, removível normalmente |
+| **Sem abertura no topo** | Funciona com tampa fechada (diferente de ultrassônico/ToF) |
+| **Imune a vapor** | Sensor totalmente externo à câmara úmida |
+| **Leitura contínua** | Percentual real, não apenas níveis discretos |
+| **I2C compartilhado** | Usa o mesmo barramento que NAU7802 (sem pinos extras) |
+| **Baixo consumo** | ~2 mA (menor que qualquer alternativa) |
+
+### Alternativas descartadas
+
+| Sensor | Motivo |
+|---|---|
+| XKC-Y25-NPN (capacitivo pontual) | Leitura discreta (4 níveis), sensores grandes (~2cm), fios a desconectar na remoção |
+| AJ-SR04M (ultrassônico) | Precisa de abertura no topo, sensível a vapor, alimentação 5V |
+| VL53L0X (ToF laser) | Precisa de abertura no topo, condensação na lente, superfície irregular |
+| Célula de carga sob encaixe | Reservatório lateral (não suspenso), precisa de encaixe perfeito anti-vazamento |
+| FDC2112 (2 canais) | Funcional mas sem canais sobressalentes — FDC2214 (4ch) dá mais margem |
+
+### Notas de integração
+
+- **I2C2 compartilhado**: mesmo barramento que NAU7802 — endereços distintos (NAU=0x2A, FDC=0x2B), pull-ups 4.7kΩ compartilhados
+- **Módulo breakout recomendado**: procurar "FDC2214 breakout" — inclui indutor, capacitores e conector para sensor externo
+- **Application note TI**: [SNOA930](https://www.ti.com/lit/an/snoa930/snoa930.pdf) — "Capacitive Sensing with FDC2x1x for Liquid Level Sensing"
+- **Biblioteca**: `FDC2214` disponível para Arduino/PlatformIO — compatível com STM32 via HAL I2C
+- **Fita de cobre**: usar fita com adesivo condutor (condutiva no verso) para garantir contato elétrico uniforme ao longo de toda a tira
+- **Blindagem**: se necessário, uma terceira tira aterrada atrás das duas de medição (plano de guarda) bloqueia interferência por trás — normalmente desnecessário pela posição mecânica
+- A leitura de nível alimenta:
+  - **Display** — barra de nível em % tempo real
+  - **MQTT** — logging de consumo de água por extração
+  - **Alarme nível baixo** — alerta no display/web quando < 15%
+  - **Interrupção de extração** — se nível atingir ~5%, pode interromper bomba (proteção contra funcionamento a seco)
+
+---
+
 ## Validação do sistema
 
 ### Balanço energético (barramento 5V — fonte HLK-PM05)
@@ -1721,22 +1959,22 @@ A configuração de 3 fios compensa a resistência dos cabos:
 | MAX31865 | ~3 mA | Conversor RTD (SPI) |
 | PT100 (excitação) | ~1 mA | Via MAX31865 interno |
 | Transdutor de pressão | ~10 mA | 0-1.2 MPa, alimentação 5V |
-| Sensor nível | ~10 mA | Capacitivo, sinal analógico |
+| FDC2214 (sensor nível) | ~2 mA | I2C, endereço 0x2B |
 | RobotDyn Dimmer (lógica DC) | ~5 mA | Opto interno + zero-cross |
 | SSR (controle DC) | ~15 mA | Corrente de disparo do opto interno |
 | Display TFT 3.5" IPS | ~100 mA | ILI9488 + backlight |
 | PZEM-004T v3 | ~15 mA | Medição de energia AC |
-| **TOTAL (pior caso)** | **~755 mA** | — |
-| **TOTAL (operação típica)** | **~622 mA** | Kill switch inativo, 1 opto |
+| **TOTAL (pior caso)** | **~747 mA** | — |
+| **TOTAL (operação típica)** | **~614 mA** | Kill switch inativo, 1 opto |
 
 ### ⚠️ Fonte de alimentação
 
-Com a inclusão de todos os módulos, o consumo de pior caso é **~755mA**.
+Com a inclusão de todos os módulos, o consumo de pior caso é **~747mA**.
 
 | Fonte | Capacidade | Status |
 |---|---|---|
-| HLK-PM05 | 600 mA | ❌ Insuficiente (pior caso 755mA) |
-| **HLK-5M05** | **1000 mA** | ✅ Recomendada (margem de ~32%) |
+| HLK-PM05 | 600 mA | ❌ Insuficiente (pior caso 747mA) |
+| **HLK-5M05** | **1000 mA** | ✅ Recomendada (margem de ~34%) |
 | HLK-10M05 | 2000 mA | Overkill mas segura |
 
 A **HLK-5M05 (5V/1A)** continua sendo a escolha recomendada — com margem confortável.
@@ -1746,7 +1984,7 @@ A **HLK-5M05 (5V/1A)** continua sendo a escolha recomendada — com margem confo
 | Controlador | Pinos usados | Pinos disponíveis | Margem |
 |---|---|---|---|
 | ESP32-S3 | 12 | ~25 usáveis | ✅ 13 livres |
-| STM32F411 | 20 | 36 | ✅ 16 livres |
+| STM32F411 | 19 | 36 | ✅ 17 livres (PB1 liberado) |
 
 ### Comunicação entre controladores
 
