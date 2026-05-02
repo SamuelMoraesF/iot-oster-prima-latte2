@@ -115,7 +115,8 @@ sequenceDiagram
 | `README.md` | Este arquivo — visão geral do projeto |
 | `manual.pdf` | Manual original da cafeteira |
 | [`docs/arquitetura.md`](docs/arquitetura.md) | Arquitetura detalhada do sistema |
-| [`docs/componentes.md`](docs/componentes.md) | Lista de componentes (BOM) |
+| [`docs/componentes.md`](docs/componentes.md) | Lista de componentes (BOM resumida) |
+| [`docs/COMPONENTES.md`](docs/COMPONENTES.md) | Especificações detalhadas por componente (pinagem, consumo, integração) |
 | [`docs/pinagem.md`](docs/pinagem.md) | Mapeamento de pinos do ESP32 |
 | [`docs/sensores.md`](docs/sensores.md) | Detalhes dos sensores |
 | [`docs/atuadores.md`](docs/atuadores.md) | Detalhes dos atuadores |
