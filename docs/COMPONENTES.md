@@ -473,24 +473,26 @@ graph LR
 
 ### Mapeamento dos 6 botões
 
-| # | Botão | GPIO STM32 | Função clique | Função press-and-hold |
-|---|-------|-----------|---------------|----------------------|
-| 1 | Botão 1 | PB6 | Ação simples | Ação prolongada |
-| 2 | Botão 2 | PB7 | Ação simples | Ação prolongada |
-| 3 | Botão 3 | PB8 | Ação simples | Ação prolongada |
-| 4 | Botão 4 | PB10 | Ação simples | Ação prolongada |
-| 5 | Botão 5 | PB12 | Ação simples | Ação prolongada |
-| 6 | Botão 6 | PB13 | Ação simples | Ação prolongada |
-
-> **Nota:** Os nomes/funções exatos de cada botão serão mapeados ao abrir a máquina e identificar o painel.
+| # | Botão | GPIO STM32 | 1º clique | 2º clique |
+|---|-------|-----------|-----------|-----------|
+| 1 | Expresso | PB6 | Café curto | Café lungo |
+| 2 | Al Gusto | PB7 | Inicia extração livre | Para a extração |
+| 3 | Latte | PB8 | Café curto (com leite) | Café lungo (com leite) |
+| 4 | Cappuccino | PB10 | Café curto (com espuma) | Café lungo (com espuma) |
+| 5 | Espuma | PB12 | Inicia vaporização do leite | Para a vaporização |
+| 6 | Limpeza | PB13 | Ciclo de limpeza (15bar, 120°C, timer fixo) | — |
 
 ### Lógica de acionamento
 
+Os botões da Prima Latte usam **clique simples** e **segundo clique** (não press-and-hold).
+
 | Ação desejada | STM32 faz | Tempo |
 |--------------|-----------|-------|
-| Clique simples | `HIGH` → `LOW` | ~150ms |
-| Press-and-hold | `HIGH` → (mantém) → `LOW` | 2–3s |
+| 1º clique (iniciar) | Pulso `HIGH` → `LOW` | ~150ms |
+| 2º clique (parar / lungo) | Segundo pulso `HIGH` → `LOW` | ~150ms |
 | Inativo | `LOW` | — |
+
+> **Nota:** O intervalo entre 1º e 2º clique depende da função. Para Expresso/Latte/Cappuccino em modo lungo, o 2º clique deve vir logo após o 1º. Para Al Gusto e Espuma, o 2º clique é para parar — o STM32 controla o timing com base no peso (ratio), tempo ou comando do usuário.
 
 ### Consumo
 
