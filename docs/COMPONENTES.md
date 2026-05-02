@@ -473,26 +473,33 @@ graph LR
 
 ### Mapeamento dos 6 botões
 
-| # | Botão | GPIO STM32 | 1º clique | 2º clique |
-|---|-------|-----------|-----------|-----------|
-| 1 | Expresso | PB6 | Café curto | Café lungo |
-| 2 | Al Gusto | PB7 | Inicia extração livre | Para a extração |
-| 3 | Latte | PB8 | Café curto (com leite) | Café lungo (com leite) |
-| 4 | Cappuccino | PB10 | Café curto (com espuma) | Café lungo (com espuma) |
-| 5 | Espuma | PB12 | Inicia vaporização do leite | Para a vaporização |
-| 6 | Limpeza | PB13 | Ciclo de limpeza (15bar, 120°C, timer fixo) | — |
+| # | Botão | GPIO STM32 | 1 clique | 2 cliques | Hold / clique+hold |
+|---|-------|-----------|----------|-----------|---------------------|
+| 1 | Expresso | PB6 | Café curto | Café lungo | Calibra curto / Calibra lungo |
+| 2 | Al Gusto | PB7 | Inicia extração livre | Para a extração | — |
+| 3 | Latte | PB8 | Café curto (com leite) | Café lungo (com leite) | Calibra curto / Calibra lungo |
+| 4 | Cappuccino | PB10 | Café curto (com espuma) | Café lungo (com espuma) | Calibra curto / Calibra lungo |
+| 5 | Espuma | PB12 | Inicia vaporização do leite | Para a vaporização | — |
+| 6 | Limpeza | PB13 | Ciclo de limpeza (15bar, 120°C, timer fixo) | — | — |
 
 ### Lógica de acionamento
 
-Os botões da Prima Latte usam **clique simples** e **segundo clique** (não press-and-hold).
+Os botões da Prima Latte têm 3 modos de interação:
 
-| Ação desejada | STM32 faz | Tempo |
-|--------------|-----------|-------|
-| 1º clique (iniciar) | Pulso `HIGH` → `LOW` | ~150ms |
-| 2º clique (parar / lungo) | Segundo pulso `HIGH` → `LOW` | ~150ms |
-| Inativo | `LOW` | — |
+| Ação | Comportamento | STM32 simula |
+|------|--------------|--------------|
+| **1 clique** | Extração curta (volume pré-definido) | Pulso `HIGH` ~150ms |
+| **2 cliques** | Extração lungo (volume pré-definido) | 2 pulsos de ~150ms |
+| **Clicar e segurar** | Calibrar volume do curto (para ao soltar) | `HIGH` sustentado → `LOW` ao soltar |
+| **1 clique + segurar no 2º** | Calibrar volume do lungo (para ao soltar) | Pulso ~150ms + pausa + `HIGH` sustentado → `LOW` |
 
-> **Nota:** O intervalo entre 1º e 2º clique depende da função. Para Expresso/Latte/Cappuccino em modo lungo, o 2º clique deve vir logo após o 1º. Para Al Gusto e Espuma, o 2º clique é para parar — o STM32 controla o timing com base no peso (ratio), tempo ou comando do usuário.
+> **Nota:** No uso via IoT, a calibração por hold provavelmente não será utilizada — o STM32 controla parada por peso (ratio), tempo ou comando do usuário via Al Gusto. Mas o optoacoplador suporta hold sem problemas (estado sólido, sem desgaste).
+
+| Estado GPIO | Significado |
+|-------------|-------------|
+| `LOW` | Inativo (botão "solto") |
+| `HIGH` por ~150ms | Clique simples |
+| `HIGH` sustentado | Botão "pressionado" (calibração) |
 
 ### Consumo
 
