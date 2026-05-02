@@ -57,7 +57,7 @@ classDiagram
         +Coil_pos: 5V via driver NPN
         +Coil_neg: GND
         +COM: Fase 220V entrada
-        +NC: Saída → thermoblock + bomba
+        +NC: Saída → placa controladora original
         +NA: Não utilizado
         ---
         Bobina: 5V / 73mA / 68.5Ω
@@ -278,7 +278,7 @@ classDiagram
 
 ## 3. SLA-05VDC-SL-C (Songle 30A)
 
-**Função:** Kill switch de segurança — corte físico de emergência da potência AC (thermoblock + bomba).
+**Função:** Kill switch de segurança — corte da alimentação AC da **placa controladora original** da cafeteira. Ao desenergizar a placa, thermoblock, bomba e válvulas param. O disjuntor geral (botão físico na lateral da máquina) permanece como corte total.
 
 ### Datasheet visual
 
@@ -364,19 +364,20 @@ graph LR
     COIL --> GND["GND"]
 
     FASE["Fase 220V"] --> COM["COM"]
-    NC["NC"] --> CARGA["Thermoblock + Bomba"]
+    NC["NC"] --> CARGA["Placa controladora original"]
 
     style NC fill:#90EE90
 ```
 
 ### Lógica de operação
 
-| Estado do GPIO | Bobina | Contato NC | Máquina |
-|---------------|--------|-----------|---------|
-| **LOW** (padrão) | Desenergizada | **Fechado** | ✅ Funcionando |
-| **HIGH** (emergência) | Energizada | **Aberto** | ❌ Potência cortada |
-| **STM32 reiniciando** | Desenergizada | **Fechado** | ✅ Funcionando |
-| **Falha total (sem 5V)** | Desenergizada | **Fechado** | ✅ Funcionando |
+| Estado do GPIO | Bobina | Contato NC | Placa original | ESP32 + STM32 |
+|---------------|--------|-----------|----------------|---------------|
+| **LOW** (padrão) | Desenergizada | **Fechado** | ✅ Energizada | ✅ Online |
+| **HIGH** (emergência) | Energizada | **Aberto** | ❌ Sem energia | ✅ Online |
+| **STM32 reiniciando** | Desenergizada | **Fechado** | ✅ Energizada | ✅ Online |
+| **Falha total (sem 5V)** | Desenergizada | **Fechado** | ✅ Energizada | ❌ Offline |
+| **Disjuntor lateral OFF** | — | — | ❌ Tudo desligado | ❌ Tudo desligado |
 
 ### Driver necessário
 
@@ -388,10 +389,13 @@ O STM32 fornece ~25mA por GPIO, insuficiente para os 73mA da bobina. Necessário
 
 ### Notas de integração
 
-- Operação NC garante que a máquina **não desliga** se o STM32 reiniciar ou perder energia
-- O kill switch **não é o controle funcional** — quem liga/desliga thermoblock e bomba são o SSR e o dimmer
-- É apenas uma camada de segurança para corte de emergência (remoto ou por condição anômala detectada pelo STM32)
-- Considerar adicionar um LED indicador no case externo para sinalizar quando o kill switch está ativo (potência cortada)
+- Operação NC garante que a placa original **não desliga** se o STM32 reiniciar ou perder energia
+- O kill switch corta a **placa controladora original** da cafeteira — sem ela, thermoblock, bomba e válvulas ficam inoperantes
+- **Não é o controle funcional** — quem liga/desliga thermoblock e bomba no dia-a-dia são o SSR e o dimmer
+- É uma camada de segurança para corte de emergência (remoto ou por condição anômala detectada pelo STM32)
+- ESP32 + STM32 permanecem online (alimentados pela fonte DC separada) — podem reportar o evento e religar remotamente
+- O **disjuntor geral** (botão físico na lateral da cafeteira) continua como corte total de tudo
+- Considerar adicionar um LED indicador no case externo para sinalizar quando o kill switch está ativo (placa original sem energia)
 
 ---
 
