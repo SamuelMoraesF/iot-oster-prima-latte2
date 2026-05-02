@@ -568,6 +568,10 @@ classDiagram
     }
 ```
 
+### Dimensões do painel frontal da cafeteira
+
+O painel frontal da Oster Prima Latte II mede **12 × 9 cm**. Considerando uma borda de ~1 cm para encaixe/moldura, a área útil para o display é de aproximadamente **10 × 7 cm** — comporta com folga o módulo 3.5" (93 × 59 mm).
+
 ### Especificações gerais
 
 | Parâmetro | Valor |
