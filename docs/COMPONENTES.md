@@ -18,8 +18,8 @@ classDiagram
         +PA7: SPI1 MOSI
         +PB0: Transdutor pressão (ADC in)
         +PB1: Sensor nível (ADC in)
-        +PB3: HX711 SCK (digital out)
-        +PB4: HX711 DOUT (digital in)
+        +PB3: NAU7802 SDA (I2C2)
+        +PB4: NAU7802 SCL (I2C2 — AF9)
         +PB5: SSR thermoblock (timer PWM out)
         +PB6: Opto botão 1 (out)
         +PB7: Opto botão 2 (out)
@@ -270,8 +270,8 @@ classDiagram
 | PA7 | SPI1 MOSI | SPI1 | Compartilhado MAX31865 |
 | PB0 | Transdutor pressão | ADC1_CH8 | 0-3.3V (divisor resistivo se necessário) |
 | PB1 | Sensor nível | ADC1_CH9 | Capacitivo, sinal analógico |
-| PB3 | HX711 SCK | Digital out | Bit-bang, timing preciso |
-| PB4 | HX711 DOUT | Digital in | Leitura 24-bit |
+| PB3 | NAU7802 SDA | I2C2 (AF9) | Balança — dados bidirecional |
+| PB4 | NAU7802 SCL | I2C2 (AF9) | Balança — clock |
 | PB5 | SSR thermoblock | Timer PWM out | TIM3_CH2 — PID slow PWM (~1-2Hz) |
 | PB6 | Opto botão 1 | Digital out | Via resistor 220Ω → PC817 |
 | PB7 | Opto botão 2 | Digital out | Via resistor 220Ω → PC817 |
@@ -288,7 +288,7 @@ classDiagram
 - **Opera independente** — se o ESP32 desligar/reiniciar, o STM32 mantém PID ativo e máquina segura
 - **FPU hardware** — cálculos PID com float (Kp, Ki, Kd) sem penalidade de performance
 - **Timers advanced** (TIM1) — pode ser usado futuramente para pressure profiling mais sofisticado
-- **5V tolerant** — pode receber sinais de módulos 5V diretamente (HX711, relés) sem level shifter
+- **5V tolerant** — pode receber sinais de módulos 5V diretamente (relés) sem level shifter
 - Comunicação com ESP32 via UART a **115200 bps** (suficiente para ~100 atualizações/s de todos os sensores)
 - Protocolo sugerido: pacotes binários com header + checksum (tipo Modbus simplificado) ou MessagePack
 
@@ -298,7 +298,7 @@ classDiagram
 |--------------------|-------------------|
 | PID thermoblock (SSR) | Display LVGL |
 | Dimmer bomba (zero-cross) | Web server + API REST |
-| Leitura HX711 (peso) | MQTT publish |
+| Leitura NAU7802 (peso) | MQTT publish |
 | Leitura MAX31865 (temp) | WebSocket (gráficos live) |
 | Leitura pressão (ADC) | OTA de ambos (self + STM32) |
 | Leitura nível (ADC) | Histórico de shots |
@@ -797,6 +797,221 @@ O PZEM fica **antes do relé kill switch**, na entrada AC. Isso garante que:
 
 ---
 
+## 7. NAU7802 + 4× Células de carga barra 500g — Balança de extração
+
+**Quantidade:** 1× NAU7802 (breakout SparkFun Qwiic ou genérico) + 4× células de carga tipo barra (beam) 500g
+
+**Função:** Medir peso do café extraído em tempo real para parada preditiva por ratio (ex: 1:2 → 18g dose = para em ~36g). As 4 células ficam nos cantos da base, montadas em degraus laterais, ligadas em ponte de Wheatstone, alimentando um único NAU7802 via I2C.
+
+**Por que barra e não botão?** A base fica na zona de respingos de café. Células barra permitem montagem elevada nos cantos, com a plataforma de pesagem selada por cima e espaço livre embaixo para drenagem — mantendo as células secas.
+
+### Datasheet visual
+
+```mermaid
+classDiagram
+    class NAU7802 {
+        <<ADC 24-bit — Balança>>
+        Pino VCC: 3.3V
+        Pino GND: GND
+        Pino SDA: I2C Data (↔ STM32 PB3)
+        Pino SCL: I2C Clock (← STM32 PB4)
+        Pino DRDY: Data Ready (opcional)
+        ---
+        E+: Excitação ponte (+)
+        E-: Excitação ponte (-)
+        A+: Sinal ponte (+)
+        A-: Sinal ponte (-)
+        ---
+        24-bit, 320 SPS
+        I2C 0x2A (fixo)
+        Consumo: ~3mA
+    }
+
+    class Celulas_Carga_x4 {
+        <<4× Barra Beam — Ponte de Wheatstone>>
+        Célula 1: canto superior esq
+        Célula 2: canto superior dir
+        Célula 3: canto inferior esq
+        Célula 4: canto inferior dir
+        ---
+        Tipo: barra/beam 500g cada
+        Total: 2kg capacidade
+        Sensibilidade: ~1mV/V
+        ---
+        Fio vermelho: E+ (excitação)
+        Fio preto: E- (excitação)
+        Fio verde: S+ (sinal)
+        Fio branco: S- (sinal)
+    }
+
+    Celulas_Carga_x4 --> NAU7802 : "Ponte de Wheatstone"
+    NAU7802 --> STM32 : "I2C2 (PB3 SDA, PB4 SCL)"
+```
+
+### Disposição das células na base
+
+```mermaid
+flowchart TB
+    subgraph BASE["Plataforma de pesagem (~10×8 cm)"]
+        direction TB
+        subgraph TOP[""]
+            C1["⚖️ Barra 1\n(canto esq)"] ~~~ C2["⚖️ Barra 2\n(canto dir)"]
+        end
+        subgraph MID["Plataforma selada (sem furos)\nÁrea central livre para drenagem"]
+            GRADE["Grade inox customizada"]
+        end
+        subgraph BOT[""]
+            C3["⚖️ Barra 3\n(canto esq)"] ~~~ C4["⚖️ Barra 4\n(canto dir)"]
+        end
+    end
+    
+    BASE --> NAU["NAU7802"]
+    NAU -->|I2C| STM["STM32"]
+    STM -->|"peso > target → para"| OPTO["Opto Al Gusto"]
+```
+
+> Com 4 barras nos cantos, a leitura é precisa independente da posição — 1 xícara centralizada ou 2 xícaras lado a lado.
+
+### Montagem e proteção contra líquidos
+
+A base da xícara fica na zona de respingos/escorrimento de café. As células **devem ficar protegidas**:
+
+```mermaid
+flowchart TB
+    subgraph MONTAGEM["Vista lateral — montagem da balança"]
+        direction TB
+        CAFE["☕ Respingos / café escorrendo"] --> GRADE2["Grade inox customizada\n(sem abas de encaixe)"]
+        GRADE2 --> PLAT["Plataforma selada\n(alumínio/inox, sem furos)"]
+        PLAT --> CELULAS["4× células barra nos cantos\n(compartimento SECO)"]
+        CELULAS --> DEGRAU["Degraus de apoio\n(fixos na estrutura)"]
+    end
+    
+    DRENA["Líquido drena pelas\nbordas da plataforma"] -.-> BANDEJA["Bandeja de respingos\n(abaixo, rota separada)"]
+```
+
+| Elemento | Descrição |
+|----------|-----------|
+| **Grade inox** | Customizada (corte a laser ou CNC), sem abas que encaixem no plástico — folga ~1-2mm nas bordas |
+| **Plataforma selada** | Alumínio ou inox fino (~1-2mm), sem furos — líquido escorre pelas bordas |
+| **Células nos degraus** | 1 barra em cada canto, apoiada em degraus moldados/impressos, **fora da zona de líquido** |
+| **Vedação** | O-ring ou silicone entre plataforma e estrutura de suporte |
+| **Drenagem** | Líquido cai ao redor da plataforma para bandeja original |
+
+> **Regra fundamental:** 100% da força peso (grade + xícara + café) deve passar pelas células. A grade NÃO pode tocar na estrutura plástica da máquina — qualquer contato cria bypass de força e invalida a leitura.
+
+### Especificações do NAU7802
+
+| Parâmetro | Valor |
+|-----------|-------|
+| Resolução | 24-bit |
+| Taxa de amostragem | 10 / 20 / 40 / 80 / **320 SPS** |
+| Interface | I2C (endereço fixo 0x2A) |
+| Ganho programável (PGA) | 1× / 2× / 4× / 8× / 16× / 32× / 64× / **128×** |
+| Tensão de excitação | Interna (AVDD) ou externa |
+| Ruído RMS | ~20 nV (ganho 128×, 10 SPS) |
+| Drift térmico | **~±1 ppm/°C** (6× melhor que HX711) |
+| Consumo | ~3 mA |
+| Tensão operação | 2.7V – 5.5V |
+| Encapsulamento | SOP-16 (breakout disponível) |
+
+### Especificações das células de carga
+
+| Parâmetro | Valor |
+|-----------|-------|
+| Tipo | **Barra / beam** (flexão) |
+| Formato | Retangular compacto (~30-50mm × 12mm) |
+| Capacidade individual | 500g |
+| Capacidade total (4× em ponte) | **2 kg** |
+| Sensibilidade | ~1 mV/V |
+| Sobrecarga segura | 150% (750g por célula) |
+| Material | Liga de alumínio |
+| Erro combinado | ±0.05% FS |
+| Compensação térmica | 0–50°C |
+| Fiação | 4 fios (ponte completa interna) |
+
+### Resolução prática
+
+| Configuração | Resolução |
+|---|---|
+| 320 SPS, ganho 128× | ~0.02-0.03g |
+| 80 SPS, ganho 128× | ~0.01-0.02g |
+| 10 SPS, ganho 128× | ~0.005g |
+
+Para extração de espresso, **320 SPS com ~0.03g** é ideal — prioriza velocidade de leitura para a parada preditiva.
+
+### Alimentação
+
+| Parâmetro | Valor |
+|-----------|-------|
+| Tensão | 3.3V (direto do barramento, sem regulador) |
+| Consumo NAU7802 | ~3 mA |
+| Excitação das células | Via AVDD interno do NAU7802 |
+| Consumo total (ADC + células) | **~3 mA** |
+
+### Pinagem (conexão com STM32)
+
+| Pino NAU7802 | Pino STM32 | Função | Notas |
+|---|---|---|---|
+| VCC | 3.3V | Alimentação | — |
+| GND | GND | Referência | — |
+| SDA | PB3 | I2C2 Data | AF9 (remap), pull-up 4.7kΩ |
+| SCL | PB4 | I2C2 Clock | AF9 (remap), pull-up 4.7kΩ |
+| DRDY | — | Data Ready | Opcional (pode usar polling) |
+| E+ | — | Excitação ponte (+) | Saída interna AVDD |
+| E- | — | Excitação ponte (-) | GND interno |
+| A+ (CH1+) | — | Sinal ponte (+) | Fio verde das células |
+| A- (CH1-) | — | Sinal ponte (-) | Fio branco das células |
+
+### Ligação da ponte de Wheatstone
+
+```mermaid
+flowchart TB
+    EXC_P["E+ (NAU7802)"] --> C1["Célula 1"]
+    EXC_P --> C4["Célula 4"]
+    C1 --> SIG_P["A+ (sinal +)"]
+    C2["Célula 2"] --> SIG_P
+    C3["Célula 3"] --> SIG_N["A- (sinal -)"]
+    C4 --> SIG_N
+    C2 --> EXC_N["E- (NAU7802)"]
+    C3 --> EXC_N
+    
+    SIG_P --> NAU["NAU7802 CH1+"]
+    SIG_N --> NAU2["NAU7802 CH1-"]
+```
+
+> As 4 células se ligam em ponte — **não precisa de 4 ADCs**. Uma ponte de Wheatstone soma os sinais e entrega um diferencial único ao NAU7802.
+
+### Parada preditiva
+
+O STM32 implementa o algoritmo de parada preditiva:
+
+1. **Tara automática** antes de cada extração (peso atual = zero)
+2. **Amostragem a 320 SPS** (~3ms por leitura) durante a extração
+3. **Cálculo de fluxo instantâneo**: `Δpeso / Δtempo` (média móvel de ~10 leituras)
+4. **Modelo de inércia**: estima quanto líquido ainda vai cair após corte (~1-3g dependendo da pressão e flow rate)
+5. **Corte antecipado**: para em `(target - inércia_estimada)`
+6. **Aprendizado**: compara peso final real vs target e ajusta modelo para próxima extração
+
+| Parâmetro | Valor típico |
+|---|---|
+| Precisão de leitura | ~0.03g |
+| Margem de erro no corte | **±0.5g (~0.5ml)** |
+| Latência sensor → decisão | ~3-6 ms |
+| Latência total (até bomba parar) | ~500-1300 ms (mecânica) |
+
+### Notas de integração
+
+- **I2C2 via AF9 (remap)**: PB3/PB4 no STM32F411 não são os pinos padrão do I2C2 (PB10/PB3) — requer configuração de alternate function AF9 no CubeMX/HAL
+- **Pull-ups de 4.7kΩ** em SDA e SCL — o breakout SparkFun já inclui, mas verificar
+- Endereço I2C fixo **0x2A** — sem conflito com outros dispositivos no barramento
+- Biblioteca recomendada: `sparkfun/SparkFun_Qwiic_Scale_NAU7802` (Arduino/PlatformIO)
+- **Calibração**: fazer uma vez com peso conhecido (ex: 200g), salvar fator na flash do STM32
+- **Tara**: recalculada automaticamente a cada extração (drift térmico compensado)
+- A plataforma de pesagem deve ser **mecanicamente isolada** do corpo da máquina para evitar vibração da bomba nos readings — considerar amortecedores de silicone nos apoios
+- Com 320 SPS, usar **filtro digital** (média móvel ou Kalman) para suavizar ruído de vibração
+
+---
+
 ## Validação do sistema
 
 ### Balanço energético (barramento 5V — fonte HLK-PM05)
@@ -807,21 +1022,21 @@ O PZEM fica **antes do relé kill switch**, na entrada AC. Isso garante que:
 | STM32F411 BlackPill | ~60 mA | 100MHz + periféricos |
 | Kill switch (bobina via driver) | ~73 mA | Só quando ativado (emergência) |
 | 6× PC817 (optoacopladores) | ~10 mA | Típico: 1 botão por vez (~60mA pior caso) |
-| HX711 | ~1.5 mA | — |
+| NAU7802 | ~3 mA | ADC 24-bit balança |
 | MAX31865 | ~3 mA | — |
 | Sensor nível | ~10 mA | — |
 | Display TFT 3.5" IPS | ~100 mA | ILI9488 + backlight |
 | PZEM-004T v3 | ~15 mA | Medição de energia AC |
-| **TOTAL (pior caso)** | **~723 mA** | — |
-| **TOTAL (operação típica)** | **~600 mA** | Kill switch inativo, 1 opto |
+| **TOTAL (pior caso)** | **~724 mA** | — |
+| **TOTAL (operação típica)** | **~601 mA** | Kill switch inativo, 1 opto |
 
 ### ⚠️ Fonte de alimentação
 
-Com a troca de relés 3ch por optoacopladores, o consumo de pior caso caiu de ~838mA para **~723mA**.
+Com a troca de relés 3ch por optoacopladores, o consumo de pior caso caiu de ~838mA para **~724mA**.
 
 | Fonte | Capacidade | Status |
 |---|---|---|
-| HLK-PM05 | 600 mA | ❌ Insuficiente (pior caso 723mA) |
+| HLK-PM05 | 600 mA | ❌ Insuficiente (pior caso 724mA) |
 | **HLK-5M05** | **1000 mA** | ✅ Recomendada (margem de ~38%) |
 | HLK-10M05 | 2000 mA | Overkill mas segura |
 
