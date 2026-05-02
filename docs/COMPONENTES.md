@@ -2,11 +2,84 @@
 
 Referência técnica de cada componente do projeto, com pinagem, consumo, protocolos e notas de integração.
 
+## Visão geral (datasheet visual)
+
+```mermaid
+classDiagram
+    class ESP32_S3_N16R8 {
+        <<Microcontrolador>>
+        +VIN: 5V DC (400mA)
+        +3V3: 3.3V regulado (interno)
+        +GPIO1: SSR thermoblock (PWM out)
+        +GPIO2: Dimmer bomba (out)
+        +GPIO3: Dimmer zero-cross (interrupt in)
+        +GPIO4: Relé botão 1 (out)
+        +GPIO5: Relé botão 2 (out)
+        +GPIO6: Relé botão 3 (out)
+        +GPIO7: Kill switch (out)
+        +GPIO9: Sensor nível (ADC in)
+        +GPIO11: HX711 DOUT (digital in)
+        +GPIO12: HX711 SCK (digital out)
+        +GPIO13: Transdutor pressão (ADC in)
+        +GPIO14: MAX31865 CS (SPI)
+        +GPIO15: Display CS (SPI)
+        +GPIO16: Touch CS (SPI)
+        +GPIO17: SPI SCK
+        +GPIO18: SPI MOSI
+        +GPIO8: SPI MISO
+        +GPIO19: Display DC (out)
+        +GPIO20: Display RST (out)
+        +GPIO21: Display backlight (PWM)
+        +GPIO43: PZEM TX (UART1)
+        +GPIO44: PZEM RX (UART1)
+        +WiFi: 802.11 b/g/n
+        +BLE: 5.0
+    }
+
+    class SLA_05VDC_SL_C {
+        <<Kill Switch 30A>>
+        +Coil_pos: 5V via driver NPN
+        +Coil_neg: GND
+        +COM: Fase 220V entrada
+        +NC: Saída → thermoblock + bomba
+        +NA: Não utilizado
+        ---
+        Bobina: 5V / 73mA / 68.5Ω
+        Contato NC: 15A max
+        Carga real: 5.3A
+    }
+
+    ESP32_S3_N16R8 --> SLA_05VDC_SL_C : "GPIO7 → NPN driver → bobina"
+```
+
 ---
 
 ## 1. ESP32-S3-WROOM-1 N16R8
 
 **Função:** Microcontrolador principal — coordena sensores, atuadores, display, WiFi e MQTT.
+
+### Datasheet visual
+
+```mermaid
+classDiagram
+    class ESP32_S3_N16R8 {
+        <<Microcontrolador>>
+        SoC: Xtensa LX7 dual-core 240MHz
+        Flash: 16MB | PSRAM: 8MB
+        WiFi: 802.11bgn | BLE: 5.0
+        ---
+        VIN: 5V DC (400mA típico)
+        Lógica: 3.3V
+        Pico TX: 500mA
+        Deep sleep: 10µA
+        ---
+        ADC1: GPIOs 1-10 (12-bit)
+        SPI2/SPI3: disponíveis
+        UART0/1/2: disponíveis
+        I2C0/I2C1: disponíveis
+        USB OTG: nativo (CDC+JTAG)
+    }
+```
 
 ### Especificações gerais
 
@@ -76,6 +149,39 @@ Referência técnica de cada componente do projeto, com pinagem, consumo, protoc
 ## 2. SLA-05VDC-SL-C (Songle 30A)
 
 **Função:** Kill switch de segurança — corte físico de emergência da potência AC (thermoblock + bomba).
+
+### Datasheet visual
+
+```mermaid
+classDiagram
+    class SLA_05VDC_SL_C {
+        <<Relé SPDT 30A>>
+        Fabricante: Songle
+        Config: NC (Normally Closed)
+        ---
+        Coil+: 5V DC (via driver)
+        Coil-: GND
+        ---
+        COM: Fase 220V entrada
+        NC: Saída potência (15A max)
+        NA: Não utilizado (30A max)
+        ---
+        Bobina: 73mA / 68.5Ω / 0.36W
+        Pick-up: ≤15ms
+        Release: ≤5ms
+        Carga real: 5.3A @ 220VAC
+    }
+
+    class Driver_NPN {
+        <<Circuito driver>>
+        Base: GPIO7 via 1kΩ
+        Coletor: Coil+
+        Emissor: GND
+        Flyback: 1N4007 em paralelo
+    }
+
+    Driver_NPN --> SLA_05VDC_SL_C : "aciona bobina"
+```
 
 ### Especificações gerais
 
