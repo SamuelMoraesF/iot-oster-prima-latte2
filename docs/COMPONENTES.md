@@ -110,6 +110,88 @@ classDiagram
         Resp: 4µs
     }
 
+    class RobotDyn_Dimmer {
+        <<Dimmer AC — Bomba>>
+        +PWM_IN: Controle (←STM32 PA1)
+        +Z_C_OUT: Zero-cross (→STM32 PA0)
+        +VCC: 3.3-5V
+        +GND: GND
+        +AC_IN: Fase 220V (da rede)
+        +AC_OUT: Fase controlada (→bomba)
+        ---
+        TRIAC BTA16 / BT136
+        Isolação: opto interno
+        Max: 4A / 220V
+    }
+
+    class Transdutor_Pressao {
+        <<Transdutor 0-12 bar>>
+        +Saída: 0.5-4.5V (→STM32 PB0)
+        +VCC: 5V
+        +GND: GND
+        +Rosca: 1/8 BSP
+        ---
+        Faixa: 0-1.2 MPa
+        Precisão: ±1% FS
+        Material: Inox 316L
+        Resposta: ~1-5 ms
+    }
+
+    class OPV_Ajustavel {
+        <<OPV Latão 0-12 bar>>
+        +Entrada: Saída da bomba
+        +Saída café: Grupo / porta-filtro
+        +Saída alívio: Bandeja gotejamento
+        ---
+        Material: Latão niquelado
+        Ajuste: Parafuso Allen
+        Calibrado em: 9 bar
+        Mola + esfera
+    }
+
+    class SSR_DC_AC {
+        <<SSR Thermoblock>>
+        +Controle: 3-32V DC (←STM32 PB5)
+        +Carga_A: Fase 220V (da rede)
+        +Carga_B: Resistência thermoblock
+        ---
+        Tipo: Zero-cross
+        Max: 25A / 250VAC
+        Disparo: ~3V DC
+        Consumo controle: ~10 mA
+    }
+
+    class MAX31865_PT100 {
+        <<Sensor Temperatura>>
+        +CS: SPI CS (←STM32 PA4)
+        +SCK: SPI Clock (←STM32 PA5)
+        +MISO: SPI Data (→STM32 PA6)
+        +MOSI: SPI Data (←STM32 PA7)
+        +RTD+: Fio PT100 (+)
+        +RTD-: Fio PT100 (-)
+        ---
+        Resolução: 0.03125°C (15-bit)
+        PT100 Class A: ±0.15°C
+        Rosca sonda: 1/8 BSP
+    }
+
+    class NAU7802_Balanca {
+        <<ADC 24-bit Balança>>
+        +SDA: I2C (↔STM32 PB3)
+        +SCL: I2C (←STM32 PB4)
+        +CH1: 4× células barra
+        ---
+        320 SPS / 24-bit
+        Drift: ±1 ppm/°C
+        Endereço: 0x2A
+    }
+
+    STM32F411_BlackPill --> RobotDyn_Dimmer : "PA0 Z-C (in), PA1 PWM (out)"
+    RobotDyn_Dimmer --> OPV_Ajustavel : "220V controlado → bomba → OPV"
+    Transdutor_Pressao --> STM32F411_BlackPill : "PB0 ADC (0.5-4.5V)"
+    STM32F411_BlackPill --> SSR_DC_AC : "PB5 PWM (~1-2Hz)"
+    MAX31865_PT100 --> STM32F411_BlackPill : "SPI1 (PA4-7)"
+    NAU7802_Balanca --> STM32F411_BlackPill : "I2C2 (PB3/PB4 AF9)"
     STM32F411_BlackPill --> SLA_05VDC_SL_C : "PB9 → NPN driver → bobina"
     STM32F411_BlackPill --> PC817_x6 : "PB6-8,10,12,13 → 6 botões"
 ```
@@ -1012,6 +1094,619 @@ O STM32 implementa o algoritmo de parada preditiva:
 
 ---
 
+## 8. RobotDyn AC Dimmer Module
+
+**Função:** Controle de tensão AC da bomba vibratória Ulka via phase-angle cutting (TRIAC). Permite controle contínuo de pressão de 0 a 100% — usado para pré-infusão a pressão reduzida e pressure profiling.
+
+### Datasheet visual
+
+```mermaid
+classDiagram
+    class RobotDyn_Dimmer {
+        <<Módulo Dimmer AC>>
+        Fabricante: RobotDyn
+        TRIAC: BTA16 ou BT136
+        ---
+        VCC: 3.3-5V DC
+        GND: GND
+        Z-C: Saída zero-cross (→MCU)
+        PWM: Entrada gate (←MCU)
+        ---
+        AC IN: Fase 220V (da rede)
+        AC OUT: Fase controlada (→bomba)
+        ---
+        Max: 4A / 600V (BTA16)
+        Isolação: optoacoplador interno
+        Zero-cross: detector integrado
+    }
+```
+
+### Especificações gerais
+
+| Parâmetro | Valor |
+|-----------|-------|
+| TRIAC | BTA16 (600V/16A) ou BT136 (600V/4A) |
+| Corrente máxima | 4A contínuo (suficiente para Ulka: ~0.8A) |
+| Tensão AC | 110-600V (compatível com 220V BR) |
+| Tensão de controle | 3.3V–5V DC |
+| Detecção zero-cross | Integrada (optoacoplador) |
+| Isolação | Opto interno (AC ↔ DC separados) |
+| Método de controle | Phase-angle cutting |
+| Consumo lado DC | ~5 mA (lógica + LED opto) |
+
+### Princípio de operação — Phase-angle cutting
+
+O módulo corta cada semi-ciclo da onda AC em um ponto específico, reduzindo a tensão RMS entregue à bomba:
+
+```mermaid
+flowchart LR
+    subgraph CICLO["Ciclo AC (60Hz = 16.67ms)"]
+        direction TB
+        ZC1["🔻 Zero-cross\n(módulo detecta)"] --> DELAY["⏱️ Delay programado\n(0 a 8333µs)"]
+        DELAY --> FIRE["⚡ Disparo TRIAC\n(STM32 PA1 pulso)"]
+        FIRE --> COND["🔌 TRIAC conduz\naté próximo zero-cross"]
+        COND --> ZC2["🔻 Próximo zero-cross\nTRIAC desliga sozinho"]
+    end
+```
+
+| Delay após zero-cross | Tensão efetiva | Pressão aprox. | Uso |
+|---|---|---|---|
+| ~0 µs | ~100% (220V RMS) | ~9 bar (limitado OPV) | Extração normal |
+| ~2000 µs | ~85% | ~7-8 bar | Extração suave |
+| ~4000 µs | ~60% | ~5-6 bar | Pré-infusão média |
+| ~6000 µs | ~35% | ~3-4 bar | Pré-infusão leve |
+| ~8333 µs (½ ciclo) | ~0% | 0 bar | Bomba desligada |
+
+> A relação delay→pressão **não é linear** — depende da curva do TRIAC e da carga. O STM32 faz uma calibração inicial (sweep 0-100%) para construir um lookup table `delay↔pressão`.
+
+### Controle em malha fechada
+
+O dimmer opera integrado ao transdutor de pressão:
+
+```mermaid
+flowchart LR
+    TARGET["🎯 Pressão alvo\n(ex: 7 bar)"] --> PID_P["Controlador PI\n(STM32)"]
+    PID_P --> DIMMER["RobotDyn\n(delay TRIAC)"]
+    DIMMER --> BOMBA["Bomba Ulka\n(220V controlado)"]
+    BOMBA --> PRESSAO["Pressão real\nno circuito"]
+    PRESSAO --> TRANS["Transdutor\n(PB0 ADC)"]
+    TRANS --> PID_P
+```
+
+1. STM32 recebe setpoint de pressão (ex: 7 bar para pré-infusão)
+2. Lê pressão real via transdutor (ADC PB0, 50-100 Hz)
+3. Calcula erro → ajusta delay do TRIAC via PI
+4. Converge em <1s após calibração inicial
+
+### Pinagem (conexão com STM32)
+
+| Pino módulo | Pino STM32 | Função | Notas |
+|---|---|---|---|
+| VCC | 3.3V | Alimentação lógica | — |
+| GND | GND | Referência | — |
+| Z-C (zero-cross) | **PA0** | Interrupt (EXTI) | Pulso a cada zero-cross (~120Hz em 60Hz) |
+| PWM (gate TRIAC) | **PA1** | Timer PWM out | TIM2_CH2 — pulso de disparo sincronizado |
+
+### Conexão lado AC
+
+```mermaid
+flowchart LR
+    REDE["Fase 220V\n(após kill switch)"] --> AC_IN["AC IN\n(módulo)"]
+    AC_OUT["AC OUT\n(módulo)"] --> BOMBA2["Bomba Ulka\nEP5 / E5"]
+    BOMBA2 --> OPV2["OPV ajustável\n(limite 9 bar)"]
+```
+
+> O neutro da bomba vai direto — o dimmer controla apenas a **fase**.
+
+### Notas de integração
+
+- **PA0 (zero-cross)**: configurar como EXTI (interrupt on rising edge) — cada pulso dispara o timer de delay
+- **PA1 (TRIAC gate)**: TIM2_CH2 em one-pulse mode — gera pulso de ~10µs após o delay calculado
+- Frequência de controle: **120 vezes por segundo** (2× por ciclo AC de 60Hz) — resolução de ~70µs por step
+- O TRIAC desliga sozinho no zero-cross — não precisa de sinal de desligamento
+- **Não usar SSR+PWM** para bomba vibratória — causa pulsação mecânica (liga 100%, desliga, liga 100%)
+- A bomba Ulka EP5/E5 consome ~0.8A — bem dentro dos 4A do módulo
+- Usar **snubber RC** (100Ω + 100nF) nos terminais AC se houver ruído EMI perceptível
+- Posicionar o módulo no **case externo** (próximo ao ESP32/STM32), com cabos AC via conector de aviação
+
+---
+
+## 9. Transdutor de pressão 0-1.2 MPa
+
+**Função:** Medir pressão no circuito hidráulico da cafeteira em tempo real. Permite controle em malha fechada (dimmer + transdutor), calibração do OPV, e logging de curvas de pressão durante a extração.
+
+### Datasheet visual
+
+```mermaid
+classDiagram
+    class Transdutor_Pressao {
+        <<Transdutor Piezo-Resistivo>>
+        Faixa: 0 a 1.2 MPa (12 bar)
+        Saída: 0.5-4.5V (ratiometric)
+        ---
+        VCC: 5V DC
+        GND: GND
+        SIGNAL: 0.5-4.5V (→divisor→ADC)
+        ---
+        Rosca: 1/8 BSP macho
+        Material: Inox 316L
+        Vedação: O-ring integrado
+        ---
+        Precisão: ±1% FS (~±0.12 bar)
+        Resposta: 1-5 ms
+        Sobrepressão: 2× (24 bar)
+    }
+```
+
+### Especificações gerais
+
+| Parâmetro | Valor |
+|-----------|-------|
+| Faixa de medição | 0–1.2 MPa (0–12 bar) |
+| Saída | 0.5–4.5V (proporcional linear) |
+| Alimentação | 5V DC |
+| Corrente | ~10 mA |
+| Precisão | ±1% FS (~±0.12 bar) |
+| Repetibilidade | ±0.5% FS (~±0.06 bar) |
+| Tempo de resposta | 1–5 ms |
+| Temperatura operação | -40°C a +85°C |
+| Sobrepressão | 2× (24 bar) |
+| Burst pressure | 3× (36 bar) |
+| Rosca | 1/8" BSP macho |
+| Material (wetted) | Aço inox 316L |
+| Vedação | O-ring Viton |
+| Cabo | 3 fios (VCC, GND, SIGNAL) |
+
+### Conversão de saída
+
+| Pressão | Tensão de saída | Após divisor (→ADC) |
+|---|---|---|
+| 0 bar | 0.5V | 0.37V |
+| 3 bar | 1.5V | 1.10V |
+| 6 bar | 2.5V | 1.83V |
+| 9 bar | 3.5V | 2.57V |
+| 12 bar | 4.5V | 3.30V |
+
+Fórmula: `pressão (bar) = (tensão - 0.5) × 12 / 4.0`
+
+### Divisor resistivo (4.5V → 3.3V)
+
+O ADC do STM32 aceita máximo 3.3V. A saída do transdutor vai até 4.5V — necessário divisor:
+
+```mermaid
+flowchart LR
+    TRANS_OUT["Transdutor\n(0.5-4.5V)"] --> R1["R1 = 3.3kΩ"]
+    R1 --> PONTO["Ponto de medição\n(0.37-3.30V)"]
+    PONTO --> R2["R2 = 10kΩ"]
+    R2 --> GND_R["GND"]
+    PONTO --> ADC["STM32 PB0\n(ADC1_CH8)"]
+```
+
+| Parâmetro | Valor |
+|---|---|
+| R1 | 3.3 kΩ (1%) |
+| R2 | 10 kΩ (1%) |
+| Razão | Vout = Vin × 10 / 13.3 = **0.752×** |
+| Entrada máx | 4.5V → 3.38V (dentro do limite 3.3V + margem) |
+| Impedância vista pelo ADC | ~2.5 kΩ (ok para SAR ADC do STM32) |
+
+> Adicionar capacitor cerâmico de **100nF** no ponto de medição para filtrar ruído da bomba.
+
+### Posicionamento no circuito hidráulico
+
+```mermaid
+flowchart LR
+    BOMBA["Bomba Ulka"] --> TEE["T latão\n1/8 BSP"]
+    TEE --> GRUPO["→ Grupo / porta-filtro"]
+    TEE --> TRANS2["↑ Transdutor\nde pressão"]
+    TEE --> PT100["↑ PT100\n(sonda com rosca)"]
+```
+
+O transdutor é instalado em um **T de latão 1/8" BSP** na saída da bomba (após o OPV), compartilhando o ponto de medição com a sonda PT100.
+
+### Pinagem (conexão com STM32)
+
+| Fio transdutor | Destino | Notas |
+|---|---|---|
+| VCC (vermelho) | 5V DC | Alimentação |
+| GND (preto) | GND | Referência |
+| SIGNAL (amarelo) | Divisor R1/R2 → **PB0** | ADC1_CH8, 12-bit |
+
+### Notas de integração
+
+- Leitura ADC a **50-100 Hz** — suficiente para controle em malha fechada e logging de curvas
+- O STM32 usa a leitura para:
+  - **Controle do dimmer** — ajusta TRIAC para atingir pressão-alvo
+  - **Calibração do OPV** — verificar se o ajuste mecânico está em 9 bar
+  - **Curvas de extração** — envia dados via UART ao ESP32 para gráficos/histórico
+  - **Alarme de sobrepressão** — se transdutor ler >10 bar, aciona kill switch
+- **Calibração**: 0 bar = torneira aberta (sem bomba), verificar se lê ~0.5V antes do divisor
+- Preferir transdutor com **conector DIN** ou **cabo com terminal** — evitar solda em ambiente úmido
+- A rosca 1/8" BSP é padrão em bombas Ulka e conexões de espresso — compatível sem adaptador
+
+---
+
+## 10. OPV ajustável — Latão
+
+**Função:** Válvula mecânica de alívio de sobrepressão. Limita a pressão máxima do circuito a **9 bar** (ajustável), desviando o excesso de volta para a bandeja de gotejamento. Atua como teto de segurança passivo — funciona mesmo sem eletrônica.
+
+### Datasheet visual
+
+```mermaid
+classDiagram
+    class OPV_Ajustavel {
+        <<Válvula de Alívio>>
+        Material: Latão niquelado (food grade)
+        Faixa: 0-12 bar (ajustável)
+        ---
+        Entrada: 1/8 BSP fêmea (da bomba)
+        Saída café: 1/8 BSP fêmea (→grupo)
+        Saída alívio: Mangueira (~4mm)
+        ---
+        Ajuste: Parafuso Allen (2.5mm)
+        Mecanismo: Mola + esfera inox
+        Calibrado em: 9 bar
+        Vedação: O-ring EPDM
+    }
+```
+
+### Especificações gerais
+
+| Parâmetro | Valor |
+|-----------|-------|
+| Material corpo | Latão niquelado (food grade) |
+| Material esfera | Aço inoxidável |
+| Material mola | Aço inox (tratamento térmico) |
+| Vedação | O-ring EPDM |
+| Rosca entrada | 1/8" BSP fêmea |
+| Rosca saída café | 1/8" BSP fêmea |
+| Saída alívio | Espigão ~4mm (para mangueira de silicone) |
+| Faixa de ajuste | ~0–12 bar |
+| Ajuste calibrado | **9 bar** |
+| Ferramenta de ajuste | Chave Allen 2.5mm |
+| Temperatura máxima | 150°C |
+
+### Mecanismo interno
+
+```mermaid
+flowchart TB
+    subgraph OPV["Corte transversal do OPV"]
+        direction TB
+        PARAFUSO["🔩 Parafuso Allen\n(gira = muda pressão)"] --> MOLA["🔄 Mola de compressão\n(mais apertada = mais pressão)"]
+        MOLA --> ESFERA["⚫ Esfera inox\n(veda a passagem)"]
+        ESFERA --> SEDE["Sede cônica\n(onde a esfera encosta)"]
+    end
+    
+    ENTRADA["Água da bomba\n(pressão variável)"] --> SEDE
+    SEDE -->|"P < 9 bar"| SAIDA_CAFE["→ 100% vai pro grupo\n(café)"]
+    SEDE -->|"P ≥ 9 bar"| SAIDA_ALIVIO["→ Excesso desvia\npara bandeja"]
+```
+
+| Rotação do parafuso | Efeito na mola | Resultado |
+|---|---|---|
+| Apertar (horário) | Comprime mais | Pressão de abertura **sobe** |
+| Afrouxar (anti-horário) | Relaxa | Pressão de abertura **desce** |
+
+### Posicionamento no circuito hidráulico
+
+```mermaid
+flowchart LR
+    RESERV["Reservatório\nde água"] --> BOMBA3["Bomba Ulka\n(via dimmer)"]
+    BOMBA3 --> OPV3["OPV\n(9 bar)"]
+    OPV3 -->|"P < 9 bar\n(100% do fluxo)"| TEE2["T latão\n1/8 BSP"]
+    OPV3 -->|"P ≥ 9 bar\n(excesso)"| BANDEJA["Bandeja de\ngotejamento"]
+    TEE2 --> GRUPO2["Grupo →\nporta-filtro"]
+    TEE2 --> TRANS3["Transdutor\npressão"]
+    TEE2 --> PT100_2["PT100\nsonda"]
+```
+
+> O OPV fica **entre a bomba e o T de medição**. Assim, o transdutor sempre lê a pressão real entregue ao grupo (já limitada pelo OPV).
+
+### Drenagem — por que bandeja e não reservatório
+
+O OPV fica na parte inferior da cafeteira. A água aliviada não tem pressão suficiente para subir de volta ao reservatório (que fica acima). A solução é drenar para a **bandeja de gotejamento**:
+
+| Opção | Funciona? | Por quê |
+|---|---|---|
+| Retorno ao reservatório | ❌ | OPV está embaixo, reservatório está em cima — água não sobe sem pressão |
+| Bandeja de gotejamento | ✅ | Está abaixo ou ao nível do OPV — gravidade faz o trabalho |
+
+Usar mangueira de silicone food-grade (~4mm interno) do espigão de alívio até a bandeja.
+
+### Procedimento de calibração
+
+1. Instalar **porta-filtro cego** (blind basket) — bloqueia a saída, forçando pressão máxima
+2. Ligar bomba a **100%** (dimmer = delay 0)
+3. Ler pressão no transdutor (STM32 → UART → ESP32 → display)
+4. Ajustar parafuso Allen **enquanto a bomba está rodando**:
+   - Leitura >9 bar → afrouxar (anti-horário)
+   - Leitura <9 bar → apertar (horário)
+5. Confirmar que estabiliza em **9.0 ±0.2 bar**
+6. Desligar bomba, conferir que não há vazamento
+
+> Após calibrado, o OPV **não precisa de ajuste novamente** — a menos que a mola degrade (anos de uso).
+
+### Notas de integração
+
+- OPV é **puramente mecânico** — não consome energia, não tem fios, não conecta ao STM32
+- É a **última linha de defesa**: mesmo se o dimmer falhar em 100%, o OPV limita a pressão
+- Substituir o OPV original da cafeteira (geralmente plástico, calibrado em ~15-19 bar de fábrica)
+- **Não usar fita veda-rosca em excesso** — rosca BSP com o-ring já veda; excesso de teflon pode travar o ajuste
+- O ajuste pode ser feito em passos de ~¼ de volta — cada volta completa muda ~3-4 bar tipicamente
+- Manter acessível para re-calibração futura (não selar dentro da máquina)
+
+---
+
+## 11. SSR DC→AC (Solid State Relay)
+
+**Função:** Controle do thermoblock (resistência de aquecimento) via PID. Chaveamento zero-cross — liga e desliga a resistência em ciclos AC completos, sem cortar a onda. O STM32 modula o duty cycle (~1-2Hz) para manter a temperatura alvo.
+
+### Datasheet visual
+
+```mermaid
+classDiagram
+    class SSR_DC_AC {
+        <<Solid State Relay>>
+        Tipo: DC → AC (zero-cross)
+        ---
+        Controle+: 3-32V DC (←STM32 PB5)
+        Controle-: GND
+        ---
+        Carga A: Fase 220V (da rede)
+        Carga B: Resistência thermoblock
+        ---
+        Max: 25A / 250VAC
+        Disparo: ~3V DC / ~10mA
+        Zero-cross: integrado
+        Queda interna: ~1.5V
+    }
+```
+
+### Especificações gerais
+
+| Parâmetro | Valor |
+|-----------|-------|
+| Tipo | DC control → AC load (zero-cross) |
+| Tensão de controle | 3–32V DC |
+| Corrente de controle | ~7.5–25 mA (depende do modelo) |
+| Tensão de carga | 24–380V AC |
+| Corrente máxima de carga | 25A (modelos comuns: 10A, 25A, 40A) |
+| Carga do projeto | Resistência thermoblock (~5A @ 220V, ~1100W) |
+| Margem de segurança | ~5× (25A / 5A) |
+| Queda de tensão interna | ~1.2–1.6V |
+| Zero-cross switching | Sim (integrado) |
+| Tempo de resposta | < 1 ciclo AC (~16.7ms) |
+| Dissipação @ 5A | ~7.5W (necessário dissipador) |
+| Isolação | > 2500V RMS (opto interno) |
+| Temperatura operação | -40°C a +80°C |
+
+### Por que zero-cross (e não phase-angle como o dimmer)
+
+| Aspecto | Phase-angle (TRIAC/Dimmer) | Zero-cross (SSR) |
+|---|---|---|
+| Corta a onda no meio? | Sim — reduz tensão RMS | Não — ciclos inteiros |
+| EMI gerado | Alto (harmônicos) | Mínimo |
+| Necessário para bomba? | ✅ Sim — precisa de tensão variável | ❌ Não |
+| Necessário para resistência? | ❌ Não | ✅ Sim — só on/off basta |
+| Controle | Contínuo (0-100% por ciclo) | Duty cycle (% de ciclos ligados) |
+
+A resistência é uma carga **puramente resistiva** — não precisa de tensão variável. A massa térmica do thermoblock faz a média: 60% de ciclos ligados = 60% da potência média = temperatura estável.
+
+### Controle PID — slow PWM
+
+```mermaid
+flowchart LR
+    SETPOINT["🎯 Temperatura alvo\n(ex: 93°C)"] --> PID_T["PID + Feedforward\n(STM32 FPU)"]
+    PID_T --> SSR2["SSR\n(duty 0-100%)"]
+    SSR2 --> RESIST["Resistência\nthermoblock"]
+    RESIST --> AGUA["Água aquecida"]
+    AGUA --> PT100_3["PT100\n(sonda 1/8 BSP)"]
+    PT100_3 --> MAX["MAX31865\n(SPI → STM32)"]
+    MAX --> PID_T
+    
+    BOMBA_FF["Bomba ON/OFF\n(feedforward)"] -.-> PID_T
+```
+
+| Parâmetro do PID | Valor típico | Notas |
+|---|---|---|
+| Frequência do loop | 1-2 Hz | Limitado pela inércia térmica |
+| Duty cycle | 0-100% (em % de ciclos AC) | 50% = ligado 500ms, desligado 500ms |
+| Feedforward | +20-30% duty quando bomba liga | Antecipa queda de temperatura |
+| Overshoot alvo | < 1°C | Com PID bem tunado |
+| Estabilidade alvo | ±0.5°C em regime | Sem surfing térmico |
+
+### Dissipação térmica
+
+O SSR dissipa ~1.5V × corrente de carga:
+
+| Carga | Dissipação | Dissipador? |
+|---|---|---|
+| 5A (thermoblock) | ~7.5W | ✅ Necessário (alumínio ~50×50mm) |
+| 10A (margem) | ~15W | Necessário maior |
+
+> Usar **pasta térmica** entre SSR e dissipador. Posicionar no case externo com ventilação.
+
+### Pinagem (conexão com STM32)
+
+| Pino SSR | Destino | Notas |
+|---|---|---|
+| Controle (+) | **PB5** (via resistor 220Ω) | TIM3_CH2 — slow PWM ~1-2Hz |
+| Controle (-) | GND | — |
+| Carga A | Fase 220V (da rede) | Após kill switch |
+| Carga B | Resistência thermoblock | — |
+
+### Notas de integração
+
+- **PB5 (TIM3_CH2)**: configurar timer com período de ~500ms-1s, duty variável de 0-100%
+- O SSR **não precisa de driver** — 3.3V do STM32 já é suficiente para disparar (threshold ~3V, funciona na prática)
+- Se quiser margem: resistor de 220Ω em série com PB5 → limita corrente a ~15mA (dentro do que o GPIO fornece)
+- **Dissipador obrigatório** — SSR sem dissipador a 5A atinge >100°C rapidamente
+- Preferir modelos com **base metálica** (Fotek, Omron G3MB, Crydom) — facilita fixação no dissipador
+- O neutro da resistência vai direto — SSR chavia apenas a **fase**
+- Considerar **fusível rápido de 10A** em série com a carga como proteção adicional
+- O kill switch (relé NC) atua **antes** do SSR na cadeia — se acionado, SSR fica sem fase
+
+---
+
+## 12. MAX31865 + PT100 sonda com rosca
+
+**Função:** Medição precisa de temperatura da água na saída do thermoblock. O MAX31865 converte a resistência do PT100 (RTD) em leitura digital de 15-bit via SPI. Alimenta o PID de temperatura que controla o SSR.
+
+### Datasheet visual
+
+```mermaid
+classDiagram
+    class MAX31865 {
+        <<Conversor RTD Digital>>
+        Fabricante: Maxim / Analog Devices
+        Resolução: 15-bit (0.03125°C)
+        ---
+        CS: SPI Chip Select (←STM32 PA4)
+        SCK: SPI Clock (←STM32 PA5)
+        MISO: SPI Data out (→STM32 PA6)
+        MOSI: SPI Data in (←STM32 PA7)
+        DRDY: Data Ready (opcional)
+        ---
+        RTD+: Fio PT100 (+)
+        RTD-: Fio PT100 (-)
+        REF+: Resistor referência
+        REF-: Resistor referência
+        ---
+        VCC: 3.3V
+        Consumo: ~3 mA
+    }
+
+    class PT100_Sonda {
+        <<RTD Classe A — Sonda>>
+        Tipo: Pt100 (100Ω @ 0°C)
+        Classe: A (±0.15°C @ 0°C)
+        ---
+        Formato: Sonda curta com rosca
+        Rosca: 1/8 BSP macho
+        Bainha: Aço inox 316L
+        Comprimento: 15-30mm
+        ---
+        Faixa: -50 a 250°C
+        Coeficiente: α = 0.00385 Ω/Ω/°C
+        Fiação: 3 fios (compensação)
+    }
+
+    MAX31865 --> PT100_Sonda : "2 ou 3 fios RTD"
+```
+
+### Especificações do MAX31865
+
+| Parâmetro | Valor |
+|-----------|-------|
+| Fabricante | Maxim Integrated / Analog Devices |
+| Resolução ADC | 15-bit |
+| Resolução de temperatura | 0.03125°C |
+| Interface | SPI (modo 1 ou 3, até 5 MHz) |
+| Tensão de operação | 3.0–3.6V |
+| Corrente típica | ~3 mA |
+| Configuração RTD | 2, 3 ou 4 fios |
+| Resistor de referência | 430Ω (para PT100) — incluso no breakout |
+| Detecção de falha | Curto, circuito aberto, over/under range |
+| Filtragem | 50Hz ou 60Hz (configurável) |
+| Taxa de conversão | ~21 conversões/s (filtro 60Hz) |
+| Encapsulamento | TSSOP-20 (breakout Adafruit / genérico) |
+
+### Especificações do PT100 sonda com rosca
+
+| Parâmetro | Valor |
+|-----------|-------|
+| Tipo | Pt100 (platina, 100Ω @ 0°C) |
+| Classe | A (IEC 60751) |
+| Precisão | ±0.15°C @ 0°C, ±0.35°C @ 100°C |
+| Coeficiente α | 0.00385 Ω/Ω/°C |
+| Formato | **Sonda curta (stub) com rosca** |
+| Rosca | 1/8" BSP macho |
+| Material bainha | Aço inox 316L |
+| Comprimento da sonda | 15–30 mm |
+| Diâmetro | ~3–6 mm |
+| Fiação | **3 fios** (compensação de resistência do cabo) |
+| Faixa útil | -50°C a +250°C |
+| Tempo de resposta (em água) | ~1–3s (com bainha) |
+| Vedação | O-ring Viton na rosca |
+
+### Por que sonda com rosca (e não filme fino colado)
+
+| Critério | Sonda com rosca | Filme colado na superfície |
+|---|---|---|
+| Mede temperatura | **Da água** (direta) | Do metal (indireta) |
+| Delay térmico | ~1-3s (contato direto) | ~3-5s (condução metal→sensor) |
+| Precisão do PID | ✅ Melhor | Pior (delay adicional) |
+| Instalação | Rosqueia no T de latão | Cola com pasta térmica |
+| Risco de vazamento | Baixo (com o-ring) | Zero |
+| Padronização | Mesma rosca do transdutor (1/8" BSP) | — |
+
+### Posicionamento
+
+A sonda PT100 compartilha o **T de latão 1/8" BSP** com o transdutor de pressão, na saída do thermoblock:
+
+```mermaid
+flowchart LR
+    THERMO["Thermoblock\n(saída)"] --> OPV4["OPV\n(9 bar)"] --> TEE3["T latão\n1/8 BSP"]
+    TEE3 --> GRUPO3["→ Grupo"]
+    TEE3 --> TRANS4["↑ Transdutor pressão"]
+    TEE3 --> PT100_4["↑ PT100 sonda"]
+```
+
+> Ambos os sensores medem no **mesmo ponto** — pressão e temperatura da água que vai para o grupo. Rosca 1/8" BSP padrão — sem adaptadores.
+
+### Pinagem (conexão com STM32)
+
+| Pino MAX31865 | Pino STM32 | Função | Notas |
+|---|---|---|---|
+| VCC | 3.3V | Alimentação | — |
+| GND | GND | Referência | — |
+| CS | **PA4** | SPI1 Chip Select | NSS manual (GPIO) |
+| SCK | **PA5** | SPI1 Clock | — |
+| MISO (SDO) | **PA6** | SPI1 Data out | — |
+| MOSI (SDI) | **PA7** | SPI1 Data in | — |
+| DRDY | — | Data Ready | Opcional — pode usar polling |
+
+### Ligação do PT100 (3 fios)
+
+```mermaid
+flowchart LR
+    PT["PT100\n(3 fios)"] -->|"Fio 1 (vermelho)"| RTDP["RTD+ (MAX31865)"]
+    PT -->|"Fio 2 (vermelho)"| RREF["FORCE+ (compensação)"]
+    PT -->|"Fio 3 (branco)"| RTDN["RTD- (MAX31865)"]
+```
+
+A configuração de 3 fios compensa a resistência dos cabos:
+- 2 fios vermelhos: um para medição, outro para compensação (mesma resistência de cabo se anula)
+- 1 fio branco: retorno
+
+> No breakout Adafruit MAX31865, **soldar o jumper de 3 fios** (vem configurado para 4 fios de fábrica).
+
+### Configuração do filtro
+
+| Frequência da rede | Configuração | Taxa de conversão |
+|---|---|---|
+| 50 Hz (Europa, etc.) | Filtro 50Hz | ~16.6 conversões/s |
+| **60 Hz (Brasil)** | **Filtro 60Hz** | **~20 conversões/s** |
+
+> Configurar para **60Hz** no registro de configuração do MAX31865 — rejeita ruído da rede elétrica brasileira.
+
+### Notas de integração
+
+- **SPI1** compartilhado: apenas o MAX31865 usa SPI1 no STM32 atualmente — CS (PA4) como GPIO manual
+- Taxa de leitura: **~10-20 Hz** é suficiente para PID de temperatura (inércia térmica do thermoblock é de segundos)
+- O MAX31865 detecta **falhas automaticamente** (circuito aberto, curto) — ler o registro de falhas e acionar alarme
+- Breakout recomendado: **Adafruit MAX31865** (inclui resistor de referência 430Ω, capacitores, terminal para PT100)
+- Biblioteca: `Adafruit_MAX31865` (Arduino/PlatformIO) — compatível com STM32 via SPI HAL
+- **Calibração**: o MAX31865 + PT100 Class A vem calibrado de fábrica — não precisa de calibração manual
+- A leitura de temperatura alimenta:
+  - **PID do thermoblock** — controle primário
+  - **Feedforward** — aumenta duty quando bomba liga (água fria entrando)
+  - **Display** — temperatura em tempo real
+  - **MQTT** — logging e gráficos de extração
+  - **Alarme over-temp** — se >100°C, desliga SSR + aciona kill switch
+
+---
+
 ## Validação do sistema
 
 ### Balanço energético (barramento 5V — fonte HLK-PM05)
@@ -1023,24 +1718,28 @@ O STM32 implementa o algoritmo de parada preditiva:
 | Kill switch (bobina via driver) | ~73 mA | Só quando ativado (emergência) |
 | 6× PC817 (optoacopladores) | ~10 mA | Típico: 1 botão por vez (~60mA pior caso) |
 | NAU7802 | ~3 mA | ADC 24-bit balança |
-| MAX31865 | ~3 mA | — |
-| Sensor nível | ~10 mA | — |
+| MAX31865 | ~3 mA | Conversor RTD (SPI) |
+| PT100 (excitação) | ~1 mA | Via MAX31865 interno |
+| Transdutor de pressão | ~10 mA | 0-1.2 MPa, alimentação 5V |
+| Sensor nível | ~10 mA | Capacitivo, sinal analógico |
+| RobotDyn Dimmer (lógica DC) | ~5 mA | Opto interno + zero-cross |
+| SSR (controle DC) | ~15 mA | Corrente de disparo do opto interno |
 | Display TFT 3.5" IPS | ~100 mA | ILI9488 + backlight |
 | PZEM-004T v3 | ~15 mA | Medição de energia AC |
-| **TOTAL (pior caso)** | **~724 mA** | — |
-| **TOTAL (operação típica)** | **~601 mA** | Kill switch inativo, 1 opto |
+| **TOTAL (pior caso)** | **~755 mA** | — |
+| **TOTAL (operação típica)** | **~622 mA** | Kill switch inativo, 1 opto |
 
 ### ⚠️ Fonte de alimentação
 
-Com a troca de relés 3ch por optoacopladores, o consumo de pior caso caiu de ~838mA para **~724mA**.
+Com a inclusão de todos os módulos, o consumo de pior caso é **~755mA**.
 
 | Fonte | Capacidade | Status |
 |---|---|---|
-| HLK-PM05 | 600 mA | ❌ Insuficiente (pior caso 724mA) |
-| **HLK-5M05** | **1000 mA** | ✅ Recomendada (margem de ~38%) |
+| HLK-PM05 | 600 mA | ❌ Insuficiente (pior caso 755mA) |
+| **HLK-5M05** | **1000 mA** | ✅ Recomendada (margem de ~32%) |
 | HLK-10M05 | 2000 mA | Overkill mas segura |
 
-A HLK-PM05 não cabe no pior caso (723mA > 600mA). A **HLK-5M05 (5V/1A)** continua sendo a escolha recomendada — com margem confortável.
+A **HLK-5M05 (5V/1A)** continua sendo a escolha recomendada — com margem confortável.
 
 ### Balanço de pinos
 
