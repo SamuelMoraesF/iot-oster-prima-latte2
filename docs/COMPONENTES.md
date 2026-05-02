@@ -65,7 +65,24 @@ classDiagram
         Carga real: 5.3A
     }
 
+    class Display_3_5_IPS {
+        <<Display 3.5 IPS>>
+        +CS_LCD: SPI CS (←ESP GPIO15)
+        +DC: Data/Cmd (←ESP GPIO19)
+        +RST: Reset (←ESP GPIO20)
+        +SCK: SPI Clock (←ESP GPIO17)
+        +MOSI: SPI Data (←ESP GPIO18)
+        +MISO: SPI Data (→ESP GPIO8)
+        +BL: Backlight PWM (←ESP GPIO21)
+        +T_CS: Touch CS (←ESP GPIO16)
+        ---
+        480×320 IPS / ILI9488
+        Touch: XPT2046
+        Consumo: ~80-100mA
+    }
+
     STM32F411_BlackPill <--> ESP32_S3_N16R8 : "UART (115200bps)"
+    ESP32_S3_N16R8 --> Display_3_5_IPS : "SPI2 (LCD + Touch)"
     class PC817_x6 {
         <<Optoacoplador x6>>
         +Pin1: Anodo LED (←GPIO via 220Ω)
@@ -526,6 +543,115 @@ Os botões da Prima Latte têm 3 modos de interação:
 
 ---
 
+## 5. Display TFT 3.5" IPS — ILI9488 + XPT2046
+
+**Função:** Interface visual e tátil para controle local da máquina — gráficos de extração em tempo real, temperatura, pressão, controles de perfil e status. Renderizado via LVGL no ESP32-S3.
+
+### Datasheet visual
+
+```mermaid
+classDiagram
+    class Display_3_5_IPS {
+        <<Display TFT + Touch>>
+        Controlador LCD: ILI9488
+        Controlador Touch: XPT2046
+        Tamanho: 3.5 pol (8.6 × 5.1cm ativo)
+        Resolução: 480 × 320 px (165 PPI)
+        ---
+        VCC: 3.3V ou 5V (com regulador)
+        Backlight: ~80mA
+        Interface: SPI (4-wire)
+        ---
+        SPI LCD: CS + DC + RST + SCK + MOSI
+        SPI Touch: CS + SCK + MOSI + MISO + IRQ
+        Backlight: PWM ou fixo
+    }
+```
+
+### Especificações gerais
+
+| Parâmetro | Valor |
+|-----------|-------|
+| Tamanho | 3.5 polegadas |
+| Tipo de painel | IPS (ângulo de visão ~170°) |
+| Resolução | 480 × 320 pixels |
+| PPI | ~165 |
+| Profundidade de cor | 262K (RGB666) / 16.7M (RGB888) |
+| Controlador LCD | ILI9488 |
+| Controlador touch | XPT2046 (resistivo) ou GT911 (capacitivo) |
+| Interface | SPI (4-wire), até 80MHz |
+| Área ativa | ~86 × 51 mm |
+| Dimensão total do módulo | ~93 × 59 mm |
+| Ângulo de visão | ~170° (IPS) |
+
+### Alimentação
+
+| Parâmetro | Valor |
+|-----------|-------|
+| Tensão de entrada | 3.3V ou 5V (módulos comuns têm regulador onboard) |
+| Corrente LCD | ~20 mA |
+| Corrente backlight | ~60-80 mA (depende do brilho) |
+| Consumo total | **~80-100 mA** |
+
+### Pinagem (conexão com ESP32-S3)
+
+| Pino do módulo | GPIO ESP32 | Função | Notas |
+|----------------|-----------|--------|-------|
+| CS (LCD) | GPIO15 | SPI Chip Select LCD | — |
+| DC / RS | GPIO19 | Data/Command select | — |
+| RST | GPIO20 | Reset LCD | — |
+| SCK | GPIO17 | SPI Clock | Compartilhado com touch |
+| MOSI / SDA | GPIO18 | SPI Master Out | Compartilhado com touch |
+| MISO | GPIO8 | SPI Master In | Compartilhado (usado pelo touch) |
+| LED / BL | GPIO21 | Backlight (PWM) | Dimmer por software |
+| T_CS | GPIO16 | SPI Chip Select touch | — |
+| T_IRQ | — | Touch interrupt | Opcional (pode usar polling) |
+| VCC | 3.3V | Alimentação | — |
+| GND | GND | — | — |
+
+**Total: 8 GPIOs do ESP32** (CS, DC, RST, SCK, MOSI, MISO, BL, T_CS)
+
+### Diagrama de ligação
+
+```mermaid
+graph LR
+    subgraph ESP32["ESP32-S3"]
+        SPI["SPI2 (SCK, MOSI, MISO)"]
+        CS_LCD["GPIO15 (CS LCD)"]
+        CS_TOUCH["GPIO16 (CS Touch)"]
+        DC["GPIO19 (DC)"]
+        RST["GPIO20 (RST)"]
+        BL["GPIO21 (Backlight PWM)"]
+    end
+
+    subgraph DISPLAY["Módulo 3.5 IPS"]
+        ILI["ILI9488 (LCD)"]
+        XPT["XPT2046 (Touch)"]
+        LED["Backlight LED"]
+    end
+
+    SPI --> ILI
+    SPI --> XPT
+    CS_LCD --> ILI
+    CS_TOUCH --> XPT
+    DC --> ILI
+    RST --> ILI
+    BL --> LED
+```
+
+### Notas de integração
+
+- SPI compartilhado entre LCD e touch — alternado via Chip Select (CS)
+- Clock SPI recomendado: **40MHz para LCD**, **2.5MHz para touch** (XPT2046 é mais lento)
+- LVGL configurado com buffer de ~480×40 linhas (~38KB) — cabe no PSRAM
+- Backlight via PWM permite ajuste de brilho (economia de energia, conforto visual)
+- IPS garante ângulo de visão amplo — legível de qualquer posição na bancada
+- Módulos de 3.5" são facilmente encontrados no AliExpress/Amazon por R$30-60
+- Se quiser upgrade futuro para capacitivo, existem módulos 3.5" com GT911 (drop-in, mesma interface SPI)
+- Resolução 480×320 é suficiente para LVGL com gráficos de extração, gauges e botões touch
+
+---
+
 ## Validação do sistema
 
 ### Balanço energético (barramento 5V — fonte HLK-PM05)
@@ -539,9 +665,9 @@ Os botões da Prima Latte têm 3 modos de interação:
 | HX711 | ~1.5 mA | — |
 | MAX31865 | ~3 mA | — |
 | Sensor nível | ~10 mA | — |
-| Display TFT 2.8" | ~80 mA | Com backlight |
-| **TOTAL (pior caso)** | **~688 mA** | — |
-| **TOTAL (operação típica)** | **~565 mA** | Kill switch inativo, 1 opto |
+| Display TFT 3.5" IPS | ~100 mA | ILI9488 + backlight |
+| **TOTAL (pior caso)** | **~708 mA** | — |
+| **TOTAL (operação típica)** | **~585 mA** | Kill switch inativo, 1 opto |
 
 ### ⚠️ Fonte de alimentação
 
