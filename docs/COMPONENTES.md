@@ -21,10 +21,13 @@ classDiagram
         +PB3: HX711 SCK (digital out)
         +PB4: HX711 DOUT (digital in)
         +PB5: SSR thermoblock (timer PWM out)
-        +PB6: Relé botão 1 (out)
-        +PB7: Relé botão 2 (out)
-        +PB8: Relé botão 3 (out)
+        +PB6: Opto botão 1 (out)
+        +PB7: Opto botão 2 (out)
+        +PB8: Opto botão 3 (out)
         +PB9: Kill switch (out)
+        +PB10: Opto botão 4 (out)
+        +PB12: Opto botão 5 (out)
+        +PB13: Opto botão 6 (out)
         ---
         VIN: 5V DC (30mA @ 3.3V)
     }
@@ -63,7 +66,20 @@ classDiagram
     }
 
     STM32F411_BlackPill <--> ESP32_S3_N16R8 : "UART (115200bps)"
+    class PC817_x6 {
+        <<Optoacoplador x6>>
+        +Pin1: Anodo LED (←GPIO via 220Ω)
+        +Pin2: Catodo LED (→GND)
+        +Pin3: Emissor (→Pad botão B)
+        +Pin4: Coletor (→Pad botão A)
+        ---
+        IF: 10mA por canal
+        Isolação: 5000 Vrms
+        Resp: 4µs
+    }
+
     STM32F411_BlackPill --> SLA_05VDC_SL_C : "PB9 → NPN driver → bobina"
+    STM32F411_BlackPill --> PC817_x6 : "PB6-8,10,12,13 → 6 botões"
 ```
 
 ---
@@ -225,12 +241,15 @@ classDiagram
 | PB3 | HX711 SCK | Digital out | Bit-bang, timing preciso |
 | PB4 | HX711 DOUT | Digital in | Leitura 24-bit |
 | PB5 | SSR thermoblock | Timer PWM out | TIM3_CH2 — PID slow PWM (~1-2Hz) |
-| PB6 | Relé botão 1 | Digital out | Via driver |
-| PB7 | Relé botão 2 | Digital out | Via driver |
-| PB8 | Relé botão 3 | Digital out | Via driver |
+| PB6 | Opto botão 1 | Digital out | Via resistor 220Ω → PC817 |
+| PB7 | Opto botão 2 | Digital out | Via resistor 220Ω → PC817 |
+| PB8 | Opto botão 3 | Digital out | Via resistor 220Ω → PC817 |
 | PB9 | Kill switch | Digital out | NC — LOW = normal, HIGH = corte |
+| PB10 | Opto botão 4 | Digital out | Via resistor 220Ω → PC817 |
+| PB12 | Opto botão 5 | Digital out | Via resistor 220Ω → PC817 |
+| PB13 | Opto botão 6 | Digital out | Via resistor 220Ω → PC817 |
 
-**Pinos usados:** 17 de 36 disponíveis — **sobra confortável**
+**Pinos usados:** 20 de 36 disponíveis — **sobra confortável**
 
 ### Notas de integração
 
@@ -376,6 +395,124 @@ O STM32 fornece ~25mA por GPIO, insuficiente para os 73mA da bobina. Necessário
 
 ---
 
+## 4. PC817 — Optoacoplador (×6)
+
+**Função:** Simular acionamento dos 6 botões do painel da máquina (clique simples e press-and-hold) via STM32, em paralelo com os botões físicos.
+
+### Datasheet visual
+
+```mermaid
+classDiagram
+    class PC817 {
+        <<Optoacoplador>>
+        Fabricante: Sharp / genérico
+        Tipo: fototransistor
+        Canais: 1 (usar 6 unidades)
+        ---
+        Pin 1: Anodo LED (←GPIO via 220Ω)
+        Pin 2: Catodo LED (→GND)
+        Pin 3: Emissor fototransistor (→Pad botão B)
+        Pin 4: Coletor fototransistor (→Pad botão A)
+        ---
+        IF: 5-20mA (LED)
+        VCE sat: ≤0.2V @ 1mA
+        Isolação: 5000 Vrms
+        CTR: 50-300%
+        Tempo resp: 4µs rise / 3µs fall
+    }
+```
+
+### Especificações gerais
+
+| Parâmetro | Valor |
+|-----------|-------|
+| Fabricante | Sharp (original) / genéricos compatíveis |
+| Encapsulamento | DIP-4 |
+| Tipo | Fototransistor |
+| Canais | 1 por unidade (6 unidades no projeto) |
+| Tensão de isolação | 5000 Vrms |
+| CTR (Current Transfer Ratio) | 50–300% @ IF=5mA, VCE=5V |
+| Tempo de resposta | ~4µs (rise) / ~3µs (fall) |
+| Temperatura de operação | -30°C a +100°C |
+
+### Lado de entrada (LED infravermelho — pinos 1 e 2)
+
+| Parâmetro | Valor |
+|-----------|-------|
+| Tensão direta (VF) | ~1.2V @ IF=20mA |
+| Corrente direta (IF) | 5–20 mA (recomendado) |
+| Corrente máxima (IF max) | 50 mA |
+| Resistor limitador | **220Ω** (para 3.3V e ~10mA) |
+| Cálculo | (3.3V − 1.2V) / 10mA = 210Ω → **220Ω padrão** |
+
+### Lado de saída (fototransistor — pinos 3 e 4)
+
+| Parâmetro | Valor |
+|-----------|-------|
+| VCE saturação | ≤ 0.2V @ IC=1mA |
+| Corrente coletor máx (IC) | 50 mA |
+| Uso no projeto | Fecha o circuito entre os 2 pads do botão |
+
+### Pinagem física
+
+```mermaid
+graph LR
+    subgraph PC817["PC817 (DIP-4)"]
+        direction TB
+        P1["Pin 1 — Anodo LED"]
+        P2["Pin 2 — Catodo LED"]
+        P3["Pin 3 — Emissor"]
+        P4["Pin 4 — Coletor"]
+    end
+
+    GPIO["STM32 GPIO"] -->|"via 220Ω"| P1
+    P2 --> GND["GND"]
+    P4 --> PADA["Pad A do botão"]
+    P3 --> PADB["Pad B do botão"]
+```
+
+### Mapeamento dos 6 botões
+
+| # | Botão | GPIO STM32 | Função clique | Função press-and-hold |
+|---|-------|-----------|---------------|----------------------|
+| 1 | Botão 1 | PB6 | Ação simples | Ação prolongada |
+| 2 | Botão 2 | PB7 | Ação simples | Ação prolongada |
+| 3 | Botão 3 | PB8 | Ação simples | Ação prolongada |
+| 4 | Botão 4 | PB10 | Ação simples | Ação prolongada |
+| 5 | Botão 5 | PB12 | Ação simples | Ação prolongada |
+| 6 | Botão 6 | PB13 | Ação simples | Ação prolongada |
+
+> **Nota:** Os nomes/funções exatos de cada botão serão mapeados ao abrir a máquina e identificar o painel.
+
+### Lógica de acionamento
+
+| Ação desejada | STM32 faz | Tempo |
+|--------------|-----------|-------|
+| Clique simples | `HIGH` → `LOW` | ~150ms |
+| Press-and-hold | `HIGH` → (mantém) → `LOW` | 2–3s |
+| Inativo | `LOW` | — |
+
+### Consumo
+
+| Cenário | Corrente total (6 unidades) |
+|---------|----------------------------|
+| Todos inativos | 0 mA |
+| 1 botão ativo | ~10 mA |
+| Pior caso (todos ativos) | ~60 mA |
+| **Operação típica** | **~10 mA** (1 botão por vez) |
+
+### Notas de integração
+
+- Soldado **em paralelo** com cada botão físico — os botões originais continuam funcionando
+- **Isolação galvânica total** entre STM32 e placa da máquina (5000 Vrms)
+- Resposta de ~4µs é ordens de grandeza mais rápida que o debounce de qualquer botão mecânico
+- Sem desgaste mecânico (estado sólido) — vida útil essencialmente infinita
+- Sem ruído audível (ao contrário de relés)
+- Cada PC817 precisa de 1 resistor de 220Ω (total: 6 resistores)
+- Se a placa interna usar lógica invertida (pull-up), o fototransistor funciona igualmente — só fecha o contato
+
+---
+
 ## Validação do sistema
 
 ### Balanço energético (barramento 5V — fonte HLK-PM05)
@@ -385,32 +522,32 @@ O STM32 fornece ~25mA por GPIO, insuficiente para os 73mA da bobina. Necessário
 | ESP32-S3 N16R8 | ~400 mA | WiFi + LVGL + WebSocket |
 | STM32F411 BlackPill | ~60 mA | 100MHz + periféricos |
 | Kill switch (bobina via driver) | ~73 mA | Só quando ativado (emergência) |
-| Módulo relé 3ch (todos ativos) | ~210 mA | Pior caso (3 bobinas simultâneas) |
+| 6× PC817 (optoacopladores) | ~10 mA | Típico: 1 botão por vez (~60mA pior caso) |
 | HX711 | ~1.5 mA | — |
 | MAX31865 | ~3 mA | — |
 | Sensor nível | ~10 mA | — |
 | Display TFT 2.8" | ~80 mA | Com backlight |
-| **TOTAL (pior caso)** | **~838 mA** | — |
-| **TOTAL (operação típica)** | **~565 mA** | Kill switch inativo, 1 relé |
+| **TOTAL (pior caso)** | **~688 mA** | — |
+| **TOTAL (operação típica)** | **~565 mA** | Kill switch inativo, 1 opto |
 
-### ⚠️ ALERTA: Fonte insuficiente
+### ⚠️ Fonte de alimentação
 
-A **HLK-PM05 (600mA)** não suporta o pior caso. Opções:
+Com a troca de relés 3ch por optoacopladores, o consumo de pior caso caiu de ~838mA para **~688mA**.
 
 | Fonte | Capacidade | Status |
 |---|---|---|
-| HLK-PM05 | 600 mA | ❌ Insuficiente |
-| **HLK-5M05** | **1000 mA** | ✅ Recomendada (margem de ~20%) |
+| HLK-PM05 | 600 mA | ❌ Insuficiente (pior caso 688mA) |
+| **HLK-5M05** | **1000 mA** | ✅ Recomendada (margem de ~45%) |
 | HLK-10M05 | 2000 mA | Overkill mas segura |
 
-**Decisão pendente:** Trocar para **HLK-5M05 (5V/1A)** na checklist.
+A HLK-PM05 ainda não cabe no pior caso (688mA > 600mA), mas a margem ficou mais apertada. A **HLK-5M05 (5V/1A)** continua sendo a escolha recomendada — agora com margem ainda mais confortável.
 
 ### Balanço de pinos
 
 | Controlador | Pinos usados | Pinos disponíveis | Margem |
 |---|---|---|---|
 | ESP32-S3 | 12 | ~25 usáveis | ✅ 13 livres |
-| STM32F411 | 17 | 36 | ✅ 19 livres |
+| STM32F411 | 20 | 36 | ✅ 16 livres |
 
 ### Comunicação entre controladores
 
