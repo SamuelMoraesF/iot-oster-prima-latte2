@@ -83,6 +83,21 @@ classDiagram
 
     STM32F411_BlackPill <--> ESP32_S3_N16R8 : "UART (115200bps)"
     ESP32_S3_N16R8 --> Display_3_5_IPS : "SPI2 (LCD + Touch)"
+    ESP32_S3_N16R8 <--> PZEM_004T_v3 : "UART2 (9600bps)"
+
+    class PZEM_004T_v3 {
+        <<Medidor de Energia AC>>
+        +TX: UART (→ESP GPIO2)
+        +RX: UART (←ESP GPIO1)
+        +AC_L: Fase (passthrough)
+        +AC_N: Neutro (passthrough)
+        +CT: Clamp na fase
+        ---
+        V, A, W, kWh, Hz, FP
+        Modbus RTU @ 9600bps
+        Consumo: ~15mA
+    }
+
     class PC817_x6 {
         <<Optoacoplador x6>>
         +Pin1: Anodo LED (←GPIO via 220Ω)
@@ -656,6 +671,132 @@ graph LR
 
 ---
 
+## 6. PZEM-004T v3.0 — Medidor de energia AC
+
+**Quantidade:** 1
+
+**Função:** Monitorar consumo de energia da cafeteira em tempo real — tensão, corrente, potência ativa, energia acumulada, frequência e fator de potência. Instalado na **entrada AC**, antes do relé kill switch, para medir o consumo total do sistema (incluindo a própria eletrônica IoT).
+
+### Datasheet visual
+
+```mermaid
+classDiagram
+    class PZEM_004T_v3 {
+        <<Medidor de Energia AC>>
+        Pino 1: 5V (VCC)
+        Pino 2: GND
+        Pino 3: TX (→ ESP32 RX)
+        Pino 4: RX (← ESP32 TX)
+        ---
+        Terminal AC_L: Fase (passthrough)
+        Terminal AC_N: Neutro (passthrough)
+        ---
+        CT (transformador de corrente)
+        conectado na fase AC
+        ---
+        UART TTL 9600bps
+        Protocolo Modbus RTU
+        Consumo: ~15mA (5V)
+    }
+```
+
+### Especificações gerais
+
+| Parâmetro | Valor |
+|-----------|-------|
+| Modelo | PZEM-004T v3.0 |
+| Medições | Tensão, Corrente, Potência, Energia, Frequência, Fator de Potência |
+| Faixa de tensão | 80–260V AC |
+| Faixa de corrente | 0–100A (via CT externo) |
+| Precisão de tensão | ±0.5% |
+| Precisão de corrente | ±0.5% |
+| Resolução de energia | 0.001 kWh |
+| Interface | UART TTL (Modbus RTU) |
+| Baud rate | 9600 bps (fixo) |
+| Endereço Modbus | 0x01 (padrão, configurável 0x01–0xF7) |
+| Reset de energia | Via comando Modbus |
+
+### Alimentação
+
+| Parâmetro | Valor |
+|-----------|-------|
+| Tensão de alimentação | 5V DC (pelo conector TTL) |
+| Consumo | ~15 mA |
+
+> ⚠️ **NÃO alimentar com 3.3V** — o módulo exige 5V. Os pinos TX/RX são 3.3V compatíveis.
+
+### Pinagem (conexão com ESP32-S3)
+
+| Pino PZEM | GPIO ESP32 | Função | Notas |
+|-----------|-----------|--------|-------|
+| VCC (5V) | — | Alimentação | Direto do barramento 5V |
+| GND | GND | Referência | Comum com ESP32 |
+| TX | GPIO2 | UART2 RX | PZEM TX → ESP32 RX |
+| RX | GPIO1 | UART2 TX | ESP32 TX → PZEM RX |
+
+### CT (Transformador de corrente)
+
+O PZEM-004T v3 utiliza um **CT (Current Transformer) externo** tipo clamp que envolve o fio de **fase AC**:
+
+```mermaid
+flowchart LR
+    TOMADA["🔌 Tomada AC"] --> FASE["Fase (L)"]
+    TOMADA --> NEUTRO["Neutro (N)"]
+    
+    FASE --> CT["🔄 CT Clamp"]
+    CT --> FASE_OUT["Fase → Cafeteira"]
+    CT -.->|sinal| PZEM["PZEM-004T"]
+    
+    FASE --> PZEM_L["Terminal AC_L"]
+    NEUTRO --> PZEM_N["Terminal AC_N"]
+    PZEM_L --> PZEM
+    PZEM_N --> PZEM
+    
+    PZEM -->|UART 9600bps| ESP32["ESP32-S3"]
+```
+
+> O CT é **não-invasivo** — não precisa cortar o fio. Basta abrir o clamp e envolver a fase.
+
+### Posição no circuito
+
+```mermaid
+flowchart LR
+    TOMADA["🔌 Tomada"] --> PZEM["⚡ PZEM-004T"]
+    PZEM --> RELE["Kill Switch"]
+    RELE --> PLACA_ORIG["Placa Original"]
+    PZEM -.->|mede tudo| TOMADA
+    
+    style PZEM fill:#ff9,stroke:#333
+```
+
+O PZEM fica **antes do relé kill switch**, na entrada AC. Isso garante que:
+- Mede o consumo **total** (placa original + eletrônica IoT + perdas)
+- Continua medindo mesmo com kill switch ativo (placa original desligada)
+- Detecta se a cafeteira está realmente desligada (potência ≈ 0W com kill switch ativo)
+
+### Métricas disponíveis via MQTT
+
+| Métrica | Tópico MQTT | Taxa de leitura |
+|---------|-------------|-----------------|
+| Tensão (V) | `espresso/oster6701/energy/voltage` | 0.5 Hz |
+| Corrente (A) | `espresso/oster6701/energy/current` | 0.5 Hz |
+| Potência (W) | `espresso/oster6701/energy/power` | 0.5 Hz |
+| Energia (kWh) | `espresso/oster6701/energy/energy` | 0.5 Hz |
+| Frequência (Hz) | `espresso/oster6701/energy/frequency` | 0.5 Hz |
+| Fator de potência | `espresso/oster6701/energy/pf` | 0.5 Hz |
+
+### Notas de integração
+
+- Comunicação UART a 9600bps — **não** usar o mesmo barramento UART do STM32 (115200bps)
+- Biblioteca recomendada: `mandulaj/PZEM-004T-v30` (Arduino/PlatformIO)
+- O CT clamp acompanha o módulo (geralmente até 100A, mais que suficiente para ~1200W da cafeteira)
+- O módulo armazena energia acumulada (kWh) em memória não-volátil — sobrevive a resets
+- Para resetar o contador de energia: enviar comando Modbus específico via software
+- Leitura a cada 2s (0.5 Hz) é suficiente — o PZEM atualiza internamente a ~1Hz
+- Compatível com 3.3V nos pinos lógicos apesar de alimentação 5V
+
+---
+
 ## Validação do sistema
 
 ### Balanço energético (barramento 5V — fonte HLK-PM05)
@@ -670,20 +811,21 @@ graph LR
 | MAX31865 | ~3 mA | — |
 | Sensor nível | ~10 mA | — |
 | Display TFT 3.5" IPS | ~100 mA | ILI9488 + backlight |
-| **TOTAL (pior caso)** | **~708 mA** | — |
-| **TOTAL (operação típica)** | **~585 mA** | Kill switch inativo, 1 opto |
+| PZEM-004T v3 | ~15 mA | Medição de energia AC |
+| **TOTAL (pior caso)** | **~723 mA** | — |
+| **TOTAL (operação típica)** | **~600 mA** | Kill switch inativo, 1 opto |
 
 ### ⚠️ Fonte de alimentação
 
-Com a troca de relés 3ch por optoacopladores, o consumo de pior caso caiu de ~838mA para **~688mA**.
+Com a troca de relés 3ch por optoacopladores, o consumo de pior caso caiu de ~838mA para **~723mA**.
 
 | Fonte | Capacidade | Status |
 |---|---|---|
-| HLK-PM05 | 600 mA | ❌ Insuficiente (pior caso 688mA) |
-| **HLK-5M05** | **1000 mA** | ✅ Recomendada (margem de ~45%) |
+| HLK-PM05 | 600 mA | ❌ Insuficiente (pior caso 723mA) |
+| **HLK-5M05** | **1000 mA** | ✅ Recomendada (margem de ~38%) |
 | HLK-10M05 | 2000 mA | Overkill mas segura |
 
-A HLK-PM05 ainda não cabe no pior caso (688mA > 600mA), mas a margem ficou mais apertada. A **HLK-5M05 (5V/1A)** continua sendo a escolha recomendada — agora com margem ainda mais confortável.
+A HLK-PM05 não cabe no pior caso (723mA > 600mA). A **HLK-5M05 (5V/1A)** continua sendo a escolha recomendada — com margem confortável.
 
 ### Balanço de pinos
 
