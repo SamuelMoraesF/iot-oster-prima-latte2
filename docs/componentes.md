@@ -36,8 +36,9 @@
 
 | Componente | Qtd | Uso | Observações |
 |---|---|---|---|
-| Fonte Hi-Link HLK-PM05 | 1 | 5V DC dentro da máquina | AC-DC, 5V/3W, encapsulada |
-| Regulador 3.3V (AMS1117) | 1 | 3.3V para ESP32 e sensores | Se necessário (ESP32 DevKit já tem) |
+| Fonte Hi-Link HLK-10M05 | 1 | 5V DC dentro da máquina | AC-DC, 5V/2A/10W, encapsulada |
+| Capacitor 470µF/10V | 1 | Filtragem barramento 5V | Eletrolítico, saída da fonte |
+| Fusível 250V/1A lento | 1 | Proteção entrada AC | Com porta-fusível |
 
 ## Conectores e Cabos
 

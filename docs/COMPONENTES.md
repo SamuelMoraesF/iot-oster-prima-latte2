@@ -209,6 +209,23 @@ classDiagram
     FDC2214_Nivel --> STM32F411_BlackPill : "I2C2 (PB3/PB4 — 0x2B)"
     STM32F411_BlackPill --> SLA_05VDC_SL_C : "PB9 → NPN driver → bobina"
     STM32F411_BlackPill --> PC817_x6 : "PB6-8,10,12,13 → 6 botões"
+
+    class HLK_10M05 {
+        <<Fonte AC→DC>>
+        +AC_IN: Fase + Neutro (220V)
+        +DC_OUT+: 5V DC
+        +DC_OUT-: GND
+        ---
+        Saída: 5V / 2A (10W)
+        Isolação: 3000V AC
+        Proteções: OCP, SCP, OVP
+        Dimensões: 51×36×20mm
+    }
+
+    HLK_10M05 --> ESP32_S3_N16R8 : "5V → VIN (LDO 3.3V onboard)"
+    HLK_10M05 --> STM32F411_BlackPill : "5V → VIN (LDO 3.3V onboard)"
+    HLK_10M05 --> Display_3_5_IPS : "5V → VCC"
+    HLK_10M05 --> Transdutor_Pressao : "5V → VCC"
 ```
 
 ---
@@ -1945,9 +1962,140 @@ A calibração é feita uma única vez e pode ser refinada automaticamente pelo 
 
 ---
 
+## 14. HLK-10M05 — Fonte AC→DC 5V/2A
+
+### Visão geral
+
+Fonte de alimentação encapsulada que converte a rede AC (220V) em 5V DC para alimentar todo o sistema de controle: microcontroladores, sensores, display e módulos de comunicação. Montada dentro do case externo da máquina.
+
+### Especificações
+
+| Parâmetro | Valor |
+|---|---|
+| Fabricante | Hi-Link |
+| Modelo | **HLK-10M05** |
+| Entrada | **100-240V AC**, 50/60 Hz |
+| Saída | **5V DC / 2000 mA (10W)** |
+| Regulação de carga | ±0.5% |
+| Ripple | < 80 mVpp |
+| Eficiência | ~80% |
+| Isolação entrada↔saída | **3000V AC** |
+| Temperatura operação | -20°C a +60°C |
+| Proteções | Sobrecarga, curto-circuito, sobretensão |
+| Encapsulamento | Módulo encapsulado PCB-mount |
+| Dimensões | **51 × 36 × 20 mm** |
+| Certificações | UL, CE, CB |
+| Preço estimado | ~R$35 |
+
+### Diagrama de distribuição de energia
+
+```mermaid
+graph TD
+    subgraph "Rede AC 220V"
+        REDE["Fase + Neutro"]
+    end
+
+    subgraph "Fonte HLK-10M05"
+        HLK["HLK-10M05<br/>220V AC → 5V DC / 2A"]
+    end
+
+    subgraph "Barramento 5V DC"
+        BAR5V["Barramento 5V<br/>(capacitor 470µF + 100nF)"]
+    end
+
+    subgraph "Reguladores 3.3V onboard"
+        REG_ESP["ESP32-S3<br/>LDO → 3.3V"]
+        REG_STM["STM32 BlackPill<br/>LDO → 3.3V"]
+    end
+
+    subgraph "Consumidores 5V direto"
+        TRANS["Transdutor pressão<br/>~10mA"]
+        DISP["Display 3.5 IPS<br/>~100mA"]
+    end
+
+    subgraph "Consumidores 3.3V (via ESP32)"
+        PZEM["PZEM-004T<br/>~15mA"]
+    end
+
+    subgraph "Consumidores 3.3V (via STM32)"
+        MAX["MAX31865<br/>~3mA"]
+        FDC["FDC2214<br/>~2mA"]
+        NAU["NAU7802<br/>~3mA"]
+        OPTO["6× PC817<br/>~10mA típico"]
+        DIM["Dimmer lógica<br/>~5mA"]
+        SSR_C["SSR controle<br/>~15mA"]
+    end
+
+    REDE --> HLK
+    HLK --> BAR5V
+    BAR5V --> REG_ESP
+    BAR5V --> REG_STM
+    BAR5V --> TRANS
+    BAR5V --> DISP
+    REG_ESP --> PZEM
+    REG_STM --> MAX
+    REG_STM --> FDC
+    REG_STM --> NAU
+    REG_STM --> OPTO
+    REG_STM --> DIM
+    REG_STM --> SSR_C
+```
+
+### Capacitores de filtragem (recomendados)
+
+| Componente | Valor | Posição | Função |
+|---|---|---|---|
+| Eletrolítico | **470 µF / 10V** | Saída da HLK (barramento 5V) | Reserva de energia para picos de corrente |
+| Cerâmico | **100 nF** | Próximo ao VIN de cada módulo | Desacoplamento de alta frequência |
+| Eletrolítico | **100 µF / 10V** | Próximo ao ESP32-S3 VIN | WiFi causa picos de ~400mA em burst |
+
+### Proteção na entrada AC
+
+| Componente | Valor | Função |
+|---|---|---|
+| **Fusível** | 250V / 1A (lento) | Proteção contra curto na fonte |
+| **Varistor (MOV)** | 275V AC | Proteção contra surtos da rede |
+
+### Dimensionamento
+
+| Métrica | Valor |
+|---|---|
+| Consumo pior caso | ~747 mA |
+| Consumo típico | ~614 mA |
+| Capacidade da fonte | 2000 mA |
+| **Margem pior caso** | **1253 mA (168%)** |
+| **Margem típica** | **1386 mA (226%)** |
+| Carga operacional | ~37% da capacidade |
+
+Operando a ~37% da capacidade nominal, a fonte trabalha fria e com vida útil maximizada.
+
+### Alternativas descartadas
+
+| Fonte | Capacidade | Motivo |
+|---|---|---|
+| HLK-PM05 | 600 mA | ❌ Insuficiente (pior caso 747mA excede capacidade) |
+| HLK-5M05 | 1000 mA | Funcional mas margem apertada (34%) — sem espaço para expansão |
+| HLK-20M05 | 4000 mA | Overkill — 4× o necessário, mais cara e maior sem necessidade |
+| Fonte externa + conector DC | Variável | Adiciona mais um cabo/conector; a HLK interna é mais limpa |
+
+### Notas de integração
+
+- **Montagem**: dentro do case externo, parafusada ou colada com fita térmica
+- **Ventilação**: a ~37% de carga gera ~2.5W de calor — dissipação passiva é suficiente em case ventilado
+- **Fiação AC**: fase e neutro da rede AC da máquina, **após** o relé kill switch (se a máquina desligar via kill switch, a fonte também desliga)
+- **Ground loop**: o GND DC da HLK é isolado da rede AC (3000V) — seguro para tocar nos componentes DC durante operação
+- **Startup**: a fonte estabiliza em ~100ms — ESP32 e STM32 têm brownout detector que aguarda tensão estável
+- A mesma rede AC alimenta diretamente:
+  - **PZEM-004T** (medição de energia — conexão AC própria)
+  - **SSR** (lado de carga — 220V direto)
+  - **RobotDyn Dimmer** (lado de potência — 220V direto)
+  - Estes componentes **não** passam pela HLK — usam a rede AC diretamente
+
+---
+
 ## Validação do sistema
 
-### Balanço energético (barramento 5V — fonte HLK-PM05)
+### Balanço energético (barramento 5V — fonte HLK-10M05)
 
 | Componente | Consumo 5V | Notas |
 |---|---|---|
@@ -1974,10 +2122,11 @@ Com a inclusão de todos os módulos, o consumo de pior caso é **~747mA**.
 | Fonte | Capacidade | Status |
 |---|---|---|
 | HLK-PM05 | 600 mA | ❌ Insuficiente (pior caso 747mA) |
-| **HLK-5M05** | **1000 mA** | ✅ Recomendada (margem de ~34%) |
-| HLK-10M05 | 2000 mA | Overkill mas segura |
+| HLK-5M05 | 1000 mA | ⚠️ Funcional mas margem apertada (~34%) |
+| **HLK-10M05** | **2000 mA** | **✅ Escolhida (margem de ~168%)** |
+| HLK-20M05 | 4000 mA | Overkill — 4× o necessário |
 
-A **HLK-5M05 (5V/1A)** continua sendo a escolha recomendada — com margem confortável.
+A **HLK-10M05 (5V/2A)** é a fonte escolhida — opera a ~37% da capacidade, com 1253mA de margem para expansões futuras. Detalhes completos na **§14**.
 
 ### Balanço de pinos
 

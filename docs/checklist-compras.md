@@ -32,8 +32,12 @@ Marque com `[x]` conforme for comprando.
 
 ## 🔋 Alimentação
 
-- [ ] Fonte Hi-Link HLK-PM05 (AC → 5V DC, 3W, encapsulada)
-- [ ] Regulador 3.3V AMS1117 (se necessário — ESP32 DevKit já tem)
+- [ ] Fonte Hi-Link HLK-10M05 (AC → 5V DC, 10W/2A, encapsulada)
+- [ ] Capacitor eletrolítico 470µF/10V (filtragem barramento 5V)
+- [ ] Capacitor eletrolítico 100µF/10V (desacoplamento ESP32)
+- [ ] Capacitores cerâmicos 100nF (desacoplamento por módulo)
+- [ ] Fusível 250V/1A lento + porta-fusível (proteção entrada AC)
+- [ ] Varistor MOV 275V AC (proteção contra surtos)
 
 ## 🔗 Conectores e Cabos
 
@@ -66,7 +70,6 @@ Marque com `[x]` conforme for comprando.
 
 ## 🛡️ Segurança
 
-- [ ] Fusível ou porta-fusível (proteção do circuito DC)
 - [ ] Dissipador de calor para SSR (se não vier incluso)
 
 ---
